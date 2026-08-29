@@ -1,4 +1,12 @@
 import { create } from 'zustand';
+import { apiFetch } from '../services/api';
+
+export interface UserAddress {
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+}
 
 export interface User {
   id: string;
@@ -8,6 +16,13 @@ export interface User {
   membership?: 'silver' | 'gold' | 'diamond';
   status?: string;
   availability?: boolean;
+  phone?: string;
+  dob?: string;
+  gender?: 'Male' | 'Female' | 'Other';
+  avatar?: string;
+  emailVerified?: boolean;
+  phoneVerified?: boolean;
+  address?: UserAddress;
 }
 
 interface AuthState {
@@ -21,12 +36,23 @@ interface AuthState {
   register: (formData: { name: string; email: string; businessName?: string }, role: User['role'], callback?: (user: User) => void) => void;
   updateUserStatus: (status: string, availability?: boolean) => void;
   updateMembership: (tier: 'silver' | 'gold' | 'diamond') => void;
+  fetchProfile: () => Promise<User | null>;
+  updateProfile: (fields: Partial<User>) => Promise<User | null>;
 }
 
+const DEFAULT_USER: User = {
+  id: 'cust_uma',
+  name: 'Uma',
+  email: 'uma@connectapp.com',
+  role: 'customer',
+  membership: 'gold',
+};
+
 export const useAuthStore = create<AuthState>((set) => ({
-  currentUser: null,
+  currentUser: DEFAULT_USER,
   pendingPurchaseProduct: null,
-  isOnboarded: false,
+  isOnboarded: true,
+
   setOnboarded: (val) => set({ isOnboarded: val }),
   setPendingPurchaseProduct: (product) => set({ pendingPurchaseProduct: product }),
   login: (email, role, callback) => {
@@ -76,13 +102,55 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
     };
   }),
-  updateMembership: (tier) => set((state) => {
-    if (!state.currentUser) return state;
-    return {
-      currentUser: {
-        ...state.currentUser,
-        membership: tier
+  updateMembership: async (tier: 'silver' | 'gold' | 'diamond') => {
+    const state = useAuthStore.getState();
+    const uId = state.currentUser?.id || 'cust_uma';
+    set({
+      currentUser: state.currentUser ? { ...state.currentUser, membership: tier } : null,
+    });
+    try {
+      const response = await apiFetch('/customer/profile', {
+        method: 'PATCH',
+        body: { membership: tier, id: uId },
+      });
+      if (response && response.status === 'success' && response.data) {
+        set({ currentUser: { ...state.currentUser, ...response.data } });
       }
-    };
-  })
+    } catch (err) {
+      console.warn('Error persisting membership update:', err);
+    }
+  },
+  fetchProfile: async () => {
+    const state = useAuthStore.getState();
+    const uId = state.currentUser?.id || 'cust_uma';
+    try {
+      const response = await apiFetch(`/customer/profile?userId=${encodeURIComponent(uId)}`, {
+        method: 'GET',
+      });
+      if (response && response.status === 'success' && response.data) {
+        set({ currentUser: { ...state.currentUser, ...response.data } });
+        return response.data;
+      }
+    } catch (err) {
+      console.warn('Error fetching profile:', err);
+    }
+    return null;
+  },
+  updateProfile: async (fields) => {
+    const state = useAuthStore.getState();
+    const uId = state.currentUser?.id || 'cust_uma';
+    try {
+      const response = await apiFetch('/customer/profile', {
+        method: 'PATCH',
+        body: { ...fields, id: uId }
+      });
+      if (response && response.status === 'success' && response.data) {
+        set({ currentUser: { ...state.currentUser, ...response.data } });
+        return response.data;
+      }
+    } catch (err) {
+      console.warn('Error updating profile:', err);
+    }
+    return null;
+  }
 }));

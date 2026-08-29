@@ -6,7 +6,9 @@ import { DeliveryStackParamList } from '../../navigation/AppNavigator';
 import { useAuthStore } from '../../store/authStore';
 import { useOrderStore, Order } from '../../store/orderStore';
 import { socketService } from '../../services/socket';
-import { apiFetch, generateMockRoute } from '../../services/api';
+import { apiFetch, generateInterpolatedRoute } from '../../services/api';
+
+
 import GlassCard from '../../components/GlassCard';
 import * as Icons from 'lucide-react-native';
 
@@ -168,7 +170,8 @@ export default function DeliveryDashboard() {
     const cLng = Number(activeOrder.customer_longitude) || (VENDOR_LNG + 0.01);
     
     // Generate route steps
-    const route = generateMockRoute(VENDOR_LAT, VENDOR_LNG, cLat, cLng, 12);
+    const route = generateInterpolatedRoute(VENDOR_LAT, VENDOR_LNG, cLat, cLng, 12);
+
     socketService.joinOrder(activeOrder.id);
 
     let currentStep = 0;

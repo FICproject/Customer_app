@@ -64,7 +64,7 @@ export default function LiveTracking() {
         }
       }
     } catch (err) {
-      console.error('Failed to load tracking data:', err);
+      console.warn('Failed to load tracking data:', err);
     } finally {
       setLoading(false);
     }

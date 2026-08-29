@@ -1,30 +1,23 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { AuthStackParamList } from '../navigation/AppNavigator';
 import GlassCard from '../components/GlassCard';
 import * as Icons from 'lucide-react-native';
+import { useLanguageStore, LANGUAGES_LIST } from '../store/languageStore';
 
 const { height } = Dimensions.get('window');
 
 type LanguageSelectionProp = StackNavigationProp<AuthStackParamList, 'LanguageSelection'>;
 
-const LANGUAGES = [
-  { code: 'en', name: 'English', nativeName: 'English', flag: '🇬🇧', active: true },
-  { code: 'hi', name: 'Hindi', nativeName: 'हिन्दी', flag: '🇮🇳', active: false },
-  { code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ', flag: '🇮🇳', active: false },
-  { code: 'ta', name: 'Tamil', nativeName: 'தமிழ்', flag: '🇮🇳', active: false },
-  { code: 'te', name: 'Telugu', nativeName: 'తెలుగు', flag: '🇮🇳', active: false },
-];
-
 export default function LanguageSelection() {
   const navigation = useNavigation<LanguageSelectionProp>();
-  const [selected, setSelected] = useState('en');
+  const currentLanguage = useLanguageStore((state) => state.currentLanguage);
+  const setLanguage = useLanguageStore((state) => state.setLanguage);
 
-  const handleSelectLanguage = (code: string) => {
-    setSelected(code);
-    // Auto-advance to Permissions
+  const handleSelectLanguage = (name: string) => {
+    setLanguage(name);
     setTimeout(() => {
       navigation.navigate('Permissions');
     }, 300);
@@ -45,32 +38,31 @@ export default function LanguageSelection() {
         {/* Intro */}
         <View style={styles.introBox}>
           <Text style={styles.title}>Choose your language</Text>
-          <Text style={styles.subtitle}>Select your preferred interface language. You can adjust this anytime in your passport settings.</Text>
+          <Text style={styles.subtitle}>Select your preferred interface language. All UI content remains in English.</Text>
         </View>
 
         {/* List */}
         <View style={styles.listContainer}>
           <Text style={styles.sectionTitle}>SUPPORTED LANGUAGES</Text>
-          {LANGUAGES.map((lang) => {
-            const isSelected = selected === lang.code;
+          {LANGUAGES_LIST.map((lang) => {
+            const isSelected = currentLanguage === lang.name;
             return (
-              <TouchableOpacity key={lang.code} activeOpacity={0.9} onPress={() => handleSelectLanguage(lang.code)}>
+              <TouchableOpacity key={lang.code} activeOpacity={0.9} onPress={() => handleSelectLanguage(lang.name)}>
                 <GlassCard
                   style={styles.langCard}
                   borderColor={isSelected ? 'rgba(244, 196, 0, 0.4)' : 'rgba(255, 255, 255, 0.08)'}
-                  backgroundColor={isSelected ? 'rgba(244, 196, 0, 0.03)' : 'rgba(255, 255, 255, 0.02)'}
                 >
-                  <View style={styles.cardRow}>
-                    <Text style={styles.flagText}>{lang.flag}</Text>
-                    <View style={styles.textDetails}>
-                      <Text style={[styles.langName, isSelected ? { color: '#F4C400' } : null]}>{lang.name}</Text>
-                      <Text style={styles.nativeName}>{lang.nativeName}</Text>
+                  <View style={styles.langLeft}>
+                    <View style={[styles.flagCircle, isSelected && styles.flagCircleActive]}>
+                      <Icons.Globe color={isSelected ? '#F4C400' : '#94A3B8'} size={18} />
                     </View>
-                    {isSelected ? (
-                      <Icons.Check color="#F4C400" size={18} />
-                    ) : (
-                      <View style={styles.radioDot} />
-                    )}
+                    <View style={styles.langNames}>
+                      <Text style={[styles.langName, isSelected && styles.langNameActive]}>{lang.name}</Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.radioCircle, isSelected && styles.radioCircleActive]}>
+                    {isSelected && <View style={styles.radioInner} />}
                   </View>
                 </GlassCard>
               </TouchableOpacity>
@@ -88,22 +80,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#050B1E',
   },
   header: {
+    height: 60,
+    marginTop: 40,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: height * 0.05,
-    paddingBottom: 12,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
   },
   backBtn: {
     width: 40,
     height: 40,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -123,54 +111,75 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: 'bold',
     color: '#FFF',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
     fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.55)',
+    color: 'rgba(255, 255, 255, 0.6)',
     lineHeight: 18,
   },
   listContainer: {
-    width: '100%',
+    gap: 10,
   },
   sectionTitle: {
     fontSize: 11,
-    fontWeight: '900',
-    color: 'rgba(255, 255, 255, 0.45)',
-    letterSpacing: 1.5,
-    marginBottom: 12,
+    fontWeight: 'bold',
+    color: '#F4C400',
+    letterSpacing: 1,
+    marginBottom: 8,
   },
   langCard: {
-    marginBottom: 12,
-    padding: 16,
-  },
-  cardRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 14,
   },
-  flagText: {
-    fontSize: 22,
+  langLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
-  textDetails: {
-    flex: 1,
-    marginLeft: 16,
+  flagCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  flagCircleActive: {
+    backgroundColor: 'rgba(244, 196, 0, 0.15)',
+  },
+  langNames: {
+    justifyContent: 'center',
   },
   langName: {
     fontSize: 15,
-    fontWeight: 'bold',
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.8)',
+  },
+  langNameActive: {
     color: '#FFF',
+    fontWeight: 'bold',
   },
-  nativeName: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.45)',
-    marginTop: 2,
+  radioCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  radioDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+  radioCircleActive: {
+    borderColor: '#F4C400',
+  },
+  radioInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#F4C400',
   },
 });

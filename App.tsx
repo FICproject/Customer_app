@@ -5,6 +5,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavigationContainer } from '@react-navigation/native';
 import AppNavigator from './src/navigation/AppNavigator';
+import Snackbar from './src/components/Snackbar';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,26 +19,30 @@ const queryClient = new QueryClient({
 
 export default function App() {
   return (
-    <GestureHandlerRootView style={styles.root}>
-      <QueryClientProvider client={queryClient}>
-        <SafeAreaProvider>
-          <NavigationContainer>
-            <StatusBar
-              barStyle="light-content"
-              backgroundColor="#050B1E"
-              translucent
-            />
-            <AppNavigator />
-          </NavigationContainer>
-        </SafeAreaProvider>
-      </QueryClientProvider>
-    </GestureHandlerRootView>
+    <ErrorBoundary>
+      <GestureHandlerRootView style={styles.root}>
+        <QueryClientProvider client={queryClient}>
+          <SafeAreaProvider>
+            <NavigationContainer>
+              <StatusBar
+                barStyle="dark-content"
+                backgroundColor="transparent"
+                translucent
+              />
+              <AppNavigator />
+              <Snackbar />
+            </NavigationContainer>
+          </SafeAreaProvider>
+        </QueryClientProvider>
+      </GestureHandlerRootView>
+    </ErrorBoundary>
   );
 }
 
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#050B1E',
+    backgroundColor: '#FFFFFF',
   },
 });
+

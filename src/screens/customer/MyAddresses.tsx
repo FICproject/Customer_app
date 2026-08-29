@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,380 +8,623 @@ import {
   TextInput,
   Modal,
   Alert,
-  Dimensions
+  ActivityIndicator,
+  Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { useThemeStore } from '../../store/themeStore';
-import * as Icons from 'lucide-react-native';
-import GlassCard from '../../components/GlassCard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Icons from 'lucide-react-native';
+import { useAuthStore } from '../../store/authStore';
+import { apiFetch } from '../../services/api';
 
-const { height } = Dimensions.get('window');
-
-interface SavedAddress {
+export interface CustomerAddress {
   id: string;
-  label: string;
+  userId: string;
+  label: 'Home' | 'Work' | 'Other';
   name: string;
   phone: string;
-  address: string;
-  icon: 'Home' | 'Briefcase' | 'MapPin' | 'Heart';
+  house: string;
+  street: string;
+  landmark?: string;
+  city: string;
+  state: string;
+  pincode: string;
   isDefault: boolean;
 }
 
-const INITIAL_ADDRESSES: SavedAddress[] = [
-  {
-    id: '1',
-    label: 'Home',
-    name: 'Arjun Kumar',
-    phone: '+91 98765 43210',
-    address: '25, 11th Cross, 4th Block, Koramangala, Bengaluru, Karnataka - 560034',
-    icon: 'Home',
-    isDefault: true
-  },
-  {
-    id: '2',
-    label: 'Work',
-    name: 'Arjun Kumar',
-    phone: '+91 98765 43210',
-    address: '91, Outer Ring Road, Bellandur, Bengaluru, Karnataka - 560103',
-    icon: 'Briefcase',
-    isDefault: false
-  },
-  {
-    id: '3',
-    label: 'Other',
-    name: 'Arjun Kumar',
-    phone: '+91 98765 43210',
-    address: 'No. 12, MG Road, Pondicherry, Puducherry - 605001',
-    icon: 'MapPin',
-    isDefault: false
-  },
-  {
-    id: '4',
-    label: 'Parents Home',
-    name: 'Arjun Kumar',
-    phone: '+91 98765 43210',
-    address: 'Old No. 8, New No. 15, Thillai Nagar, Tiruchirappalli, Tamil Nadu - 620018',
-    icon: 'Heart',
-    isDefault: false
-  }
-];
-
 export default function MyAddresses() {
-  const navigation = useNavigation();
-  const colors = useThemeStore((state) => state.colors);
-  const themeMode = useThemeStore((state) => state.themeMode);
+  const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
+  const currentUser = useAuthStore((state) => state.currentUser);
+  const fetchProfile = useAuthStore((state) => state.fetchProfile);
 
-  const [addresses, setAddresses] = useState<SavedAddress[]>(INITIAL_ADDRESSES);
+  // Addresses state
+  const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  
-  // Form States
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formLabel, setFormLabel] = useState('Home');
+
+  // Modal & Form State
+  const [modalVisible, setModalVisible] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
+
+  // Form Fields
+  const [formLabel, setFormLabel] = useState<'Home' | 'Work' | 'Other'>('Home');
   const [formName, setFormName] = useState('');
   const [formPhone, setFormPhone] = useState('');
-  const [formAddress, setFormAddress] = useState('');
-  const [formIcon, setFormIcon] = useState<'Home' | 'Briefcase' | 'MapPin' | 'Heart'>('Home');
+  const [formHouse, setFormHouse] = useState('');
+  const [formStreet, setFormStreet] = useState('');
+  const [formLandmark, setFormLandmark] = useState('');
+  const [formCity, setFormCity] = useState('');
+  const [formState, setFormState] = useState('');
+  const [formPincode, setFormPincode] = useState('');
+  const [formIsDefault, setFormIsDefault] = useState(false);
 
-  const handleSelectDefault = (id: string) => {
-    setAddresses(prev =>
-      prev.map(addr => ({
-        ...addr,
-        isDefault: addr.id === id
-      }))
-    );
+  // Load Addresses from API
+  const loadAddresses = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const uId = currentUser?.id || 'cust_uma';
+    try {
+      const res = await apiFetch(`/customer/addresses?userId=${encodeURIComponent(uId)}`, {
+        method: 'GET',
+      });
+      if (res && res.status === 'success' && Array.isArray(res.data)) {
+        setAddresses(res.data);
+      } else {
+        setError(res?.message || 'Unable to load saved addresses.');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Network error loading addresses.');
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    loadAddresses();
+  }, [loadAddresses]);
+
+  // Set Address as Default
+  const handleSetDefault = async (addrId: string) => {
+    const uId = currentUser?.id || 'cust_uma';
+    try {
+      // Optimistically update UI
+      setAddresses((prev) =>
+        prev.map((a) => ({
+          ...a,
+          isDefault: a.id === addrId,
+        }))
+      );
+
+      await apiFetch(`/customer/addresses/${addrId}/default?userId=${encodeURIComponent(uId)}`, {
+        method: 'PATCH',
+      });
+
+      // Synchronize profile store
+      fetchProfile();
+    } catch (err: any) {
+      Alert.alert('Error', 'Unable to set default address. Please try again.');
+      loadAddresses();
+    }
   };
 
-  const handleDelete = (id: string) => {
+  // Delete Address
+  const handleDeleteAddress = (addrId: string) => {
     Alert.alert(
       'Delete Address',
-      'Are you sure you want to remove this address?',
+      'Are you sure you want to remove this delivery address?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            setAddresses(prev => prev.filter(addr => addr.id !== id));
-          }
-        }
+          onPress: async () => {
+            const uId = currentUser?.id || 'cust_uma';
+            try {
+              setAddresses((prev) => prev.filter((a) => a.id !== addrId));
+              await apiFetch(`/customer/addresses/${addrId}?userId=${encodeURIComponent(uId)}`, {
+                method: 'DELETE',
+              });
+              fetchProfile();
+            } catch (err: any) {
+              Alert.alert('Error', 'Failed to delete address.');
+              loadAddresses();
+            }
+          },
+        },
       ]
     );
   };
 
+  // Open Modal for Adding New Address
   const handleOpenAddModal = () => {
-    setEditingId(null);
+    setEditingAddressId(null);
     setFormLabel('Home');
-    setFormName('');
-    setFormPhone('');
-    setFormAddress('');
-    setFormIcon('Home');
-    setIsModalOpen(true);
+    setFormName(currentUser?.name || '');
+    setFormPhone(currentUser?.phone || '');
+    setFormHouse('');
+    setFormStreet('');
+    setFormLandmark('');
+    setFormCity('Bengaluru');
+    setFormState('Karnataka');
+    setFormPincode('');
+    setFormIsDefault(addresses.length === 0);
+    setModalVisible(true);
   };
 
-  const handleOpenEditModal = (addr: SavedAddress) => {
-    setEditingId(addr.id);
+  // Open Modal for Editing Address
+  const handleOpenEditModal = (addr: CustomerAddress) => {
+    setEditingAddressId(addr.id);
     setFormLabel(addr.label);
     setFormName(addr.name);
     setFormPhone(addr.phone);
-    setFormAddress(addr.address);
-    setFormIcon(addr.icon);
-    setIsModalOpen(true);
+    setFormHouse(addr.house);
+    setFormStreet(addr.street);
+    setFormLandmark(addr.landmark || '');
+    setFormCity(addr.city);
+    setFormState(addr.state);
+    setFormPincode(addr.pincode);
+    setFormIsDefault(addr.isDefault);
+    setModalVisible(true);
   };
 
-  const handleSaveAddress = () => {
-    if (!formName.trim() || !formPhone.trim() || !formAddress.trim()) {
-      Alert.alert('Validation Error', 'Please fill out all address fields.');
+  // Validate & Save Address
+  const handleSaveAddress = async () => {
+    if (!formName.trim()) {
+      Alert.alert('Validation Error', 'Please enter recipient name.');
+      return;
+    }
+    if (!formPhone.trim() || formPhone.trim().length < 10) {
+      Alert.alert('Validation Error', 'Please enter a valid 10-digit mobile number.');
+      return;
+    }
+    if (!formHouse.trim()) {
+      Alert.alert('Validation Error', 'Please enter house/flat/building details.');
+      return;
+    }
+    if (!formStreet.trim()) {
+      Alert.alert('Validation Error', 'Please enter street/area/locality details.');
+      return;
+    }
+    if (!formCity.trim()) {
+      Alert.alert('Validation Error', 'Please enter city name.');
+      return;
+    }
+    if (!formState.trim()) {
+      Alert.alert('Validation Error', 'Please enter state name.');
+      return;
+    }
+    if (!formPincode.trim() || !/^\d{6}$/.test(formPincode.trim())) {
+      Alert.alert('Validation Error', 'Please enter a valid 6-digit postal pincode.');
       return;
     }
 
-    if (editingId) {
-      // Edit
-      setAddresses(prev =>
-        prev.map(addr =>
-          addr.id === editingId
-            ? {
-                ...addr,
-                label: formLabel,
-                name: formName,
-                phone: formPhone,
-                address: formAddress,
-                icon: formIcon
-              }
-            : addr
-        )
-      );
-    } else {
-      // Add
-      const newAddr: SavedAddress = {
-        id: Math.random().toString(),
-        label: formLabel,
-        name: formName,
-        phone: formPhone,
-        address: formAddress,
-        icon: formIcon,
-        isDefault: addresses.length === 0
-      };
-      setAddresses(prev => [...prev, newAddr]);
+    setSubmitting(true);
+    const uId = currentUser?.id || 'cust_uma';
+    const payload = {
+      userId: uId,
+      label: formLabel,
+      name: formName.trim(),
+      phone: formPhone.trim(),
+      house: formHouse.trim(),
+      street: formStreet.trim(),
+      landmark: formLandmark.trim(),
+      city: formCity.trim(),
+      state: formState.trim(),
+      pincode: formPincode.trim(),
+      isDefault: formIsDefault || addresses.length === 0,
+    };
+
+    try {
+      if (editingAddressId) {
+        // Update existing address
+        await apiFetch(`/customer/addresses/${editingAddressId}?userId=${encodeURIComponent(uId)}`, {
+          method: 'PATCH',
+          body: payload,
+        });
+      } else {
+        // Create new address
+        await apiFetch(`/customer/addresses?userId=${encodeURIComponent(uId)}`, {
+          method: 'POST',
+          body: payload,
+        });
+      }
+
+      setModalVisible(false);
+      await loadAddresses();
+      fetchProfile();
+    } catch (err: any) {
+      Alert.alert('Save Failed', err?.message || 'Could not save address. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
-    setIsModalOpen(false);
   };
 
-  const filteredAddresses = addresses.filter(
-    addr =>
-      addr.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      addr.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      addr.address.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Filter addresses if search query is present
+  const filteredAddresses = addresses.filter((a) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      a.name.toLowerCase().includes(q) ||
+      a.label.toLowerCase().includes(q) ||
+      a.street.toLowerCase().includes(q) ||
+      a.city.toLowerCase().includes(q) ||
+      a.pincode.includes(q)
+    );
+  });
 
-  const renderAddressIcon = (icon: string) => {
-    const iconColor = colors.primary;
-    switch (icon) {
-      case 'Home':
-        return <Icons.Home color={iconColor} size={18} />;
-      case 'Briefcase':
-        return <Icons.Briefcase color={iconColor} size={18} />;
-      case 'Heart':
-        return <Icons.Heart color={iconColor} size={18} />;
-      case 'MapPin':
+  const getLabelIcon = (label: string) => {
+    switch (label) {
+      case 'Work':
+        return <Icons.Briefcase color="#475569" size={16} />;
+      case 'Other':
+        return <Icons.MapPin color="#475569" size={16} />;
       default:
-        return <Icons.MapPin color={iconColor} size={18} />;
+        return <Icons.Home color="#475569" size={16} />;
     }
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={styles.container}>
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.cardBorder }]}>
-        <View style={styles.headerLeftRow}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-            <Icons.ChevronLeft color={colors.text} size={20} />
-          </TouchableOpacity>
-          <View style={styles.titleWrapper}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>My Addresses</Text>
-            <Text style={styles.headerSubtitle}>Manage your saved addresses</Text>
-          </View>
+      <View style={[styles.header, { paddingTop: insets.top, height: 56 + insets.top }]}>
+        <TouchableOpacity
+          style={styles.headerBackButton}
+          onPress={() => navigation.goBack()}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Icons.ArrowLeft color="#0F172A" size={24} />
+        </TouchableOpacity>
+
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>My Addresses</Text>
         </View>
-        <TouchableOpacity style={styles.addBtn} activeOpacity={0.8} onPress={handleOpenAddModal}>
-          <Icons.PlusCircle color={colors.primary} size={16} style={{ marginRight: 4 }} />
-          <Text style={[styles.addBtnText, { color: colors.primary }]}>Add Address</Text>
+
+        <TouchableOpacity
+          style={styles.headerAddBtn}
+          activeOpacity={0.8}
+          onPress={handleOpenAddModal}
+        >
+          <Icons.Plus color="#0F172A" size={16} />
+          <Text style={styles.headerAddBtnText}>Add</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Search Input Bar */}
-        <View style={styles.searchBarRow}>
-          <View style={[styles.searchInputWrapper, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
-            <Icons.Search color={colors.text} size={16} style={{ opacity: 0.4 }} />
-            <TextInput
-              style={[styles.searchInput, { color: colors.text }]}
-              placeholder="Search addresses"
-              placeholderTextColor={themeMode === 'light' ? 'rgba(15, 23, 42, 0.4)' : 'rgba(255, 255, 255, 0.4)'}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-            <Icons.Sliders color={colors.text} size={16} style={{ opacity: 0.4 }} />
+      {/* Main Content */}
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator color="#F4C400" size="large" />
+          <Text style={styles.loadingText}>Loading saved addresses...</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.centerContainer}>
+          <Icons.AlertTriangle color="#EF4444" size={48} style={{ marginBottom: 12 }} />
+          <Text style={styles.errorTitle}>Unable to load addresses</Text>
+          <Text style={styles.errorSubtitle}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={loadAddresses}>
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      ) : addresses.length === 0 ? (
+        /* Empty State */
+        <View style={styles.emptyContainer}>
+          <View style={styles.emptyIconCircle}>
+            <Icons.MapPin color="#F4C400" size={36} />
           </View>
+          <Text style={styles.emptyTitle}>No saved addresses yet</Text>
+          <Text style={styles.emptySubtitle}>
+            Add your delivery addresses for quick and hassle-free checkout.
+          </Text>
+          <TouchableOpacity style={styles.emptyAddBtn} onPress={handleOpenAddModal}>
+            <Icons.Plus color="#0F172A" size={18} />
+            <Text style={styles.emptyAddBtnText}>Add Address</Text>
+          </TouchableOpacity>
         </View>
+      ) : (
+        /* Addresses List */
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Optional Search bar if many addresses exist */}
+          {addresses.length >= 5 ? (
+            <View style={styles.searchBar}>
+              <Icons.Search color="#94A3B8" size={18} style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.searchInput}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Search addresses..."
+                placeholderTextColor="#94A3B8"
+              />
+              {searchQuery ? (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <Icons.X color="#94A3B8" size={16} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
 
-        {/* List Title */}
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitleText, { color: colors.text }]}>Saved Addresses</Text>
-          <Text style={styles.sectionCountText}>{filteredAddresses.length} Addresses</Text>
-        </View>
+          <View style={styles.listHeaderRow}>
+            <Text style={styles.sectionHeading}>Saved Addresses</Text>
+            <Text style={styles.addressCountBadge}>{addresses.length} Saved</Text>
+          </View>
 
-        {/* Address Cards List */}
-        {filteredAddresses.map((addr) => (
-          <TouchableOpacity
-            key={addr.id}
-            activeOpacity={0.9}
-            onPress={() => handleSelectDefault(addr.id)}
-          >
-            <GlassCard
+          {filteredAddresses.map((addr) => (
+            <View
+              key={addr.id}
               style={[
                 styles.addressCard,
-                addr.isDefault && { borderColor: colors.primary, borderWidth: 1.5 }
+                addr.isDefault && styles.defaultCardBorder,
               ]}
-              borderColor={addr.isDefault ? colors.primary : colors.cardBorder}
             >
+              {/* Card Header: Label, Default Tag & Radio Selector */}
               <View style={styles.cardHeader}>
-                <View style={styles.cardHeaderLeft}>
-                  <View style={[styles.iconCircle, { backgroundColor: colors.cardBorder }]}>
-                    {renderAddressIcon(addr.icon)}
+                <View style={styles.labelBadgeRow}>
+                  <View style={styles.labelIconPill}>
+                    {getLabelIcon(addr.label)}
                   </View>
-                  <View>
-                    <Text style={[styles.addressLabelText, { color: colors.text }]}>{addr.label}</Text>
-                    {addr.isDefault && (
-                      <View style={styles.defaultBadge}>
-                        <Text style={styles.defaultBadgeText}>Default</Text>
-                      </View>
-                    )}
-                  </View>
+                  <Text style={styles.addressLabel}>{addr.label}</Text>
+                  {addr.isDefault ? (
+                    <View style={styles.defaultBadge}>
+                      <Text style={styles.defaultBadgeText}>Default</Text>
+                    </View>
+                  ) : null}
                 </View>
 
-                {/* Selected Indicator Checkbox */}
-                <View style={[styles.selectorCircle, addr.isDefault && { backgroundColor: '#EF4444', borderColor: '#EF4444' }]}>
-                  {addr.isDefault && <Icons.Check color="#FFF" size={10} strokeWidth={3} />}
-                </View>
-              </View>
-
-              <View style={styles.cardBody}>
-                <Text style={[styles.userNameText, { color: colors.text }]}>{addr.name}</Text>
-                <Text style={styles.phoneText}>{addr.phone}</Text>
-                <Text style={[styles.fullAddressText, { color: colors.text }]}>{addr.address}</Text>
-              </View>
-
-              <View style={[styles.cardActions, { borderTopColor: colors.cardBorder }]}>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handleOpenEditModal(addr)}>
-                  <Icons.Pencil color={colors.text} size={12} style={{ marginRight: 4 }} />
-                  <Text style={[styles.actionBtnText, { color: colors.text }]}>Edit</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handleDelete(addr.id)}>
-                  <Icons.Trash2 color="#EF4444" size={12} style={{ marginRight: 4 }} />
-                  <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>Delete</Text>
+                {/* Default Radio Selector */}
+                <TouchableOpacity
+                  style={styles.radioSelector}
+                  activeOpacity={0.7}
+                  onPress={() => handleSetDefault(addr.id)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  {addr.isDefault ? (
+                    <Icons.CheckCircle2 color="#059669" size={22} />
+                  ) : (
+                    <Icons.Circle color="#CBD5E1" size={22} />
+                  )}
                 </TouchableOpacity>
               </View>
-            </GlassCard>
-          </TouchableOpacity>
-        ))}
 
-        {/* Bottom Banner */}
-        <GlassCard style={styles.instructionsCard}>
-          <View style={styles.instructionsLeft}>
-            <View style={[styles.iconCircle, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
-              <Icons.Navigation color="#EF4444" size={16} />
-            </View>
-            <View>
-              <Text style={[styles.instructionsTitle, { color: colors.text }]}>Set delivery instructions for your address</Text>
-              <Text style={styles.instructionsSubtitle}>Add instructions for our delivery partner</Text>
-            </View>
-          </View>
-          <TouchableOpacity activeOpacity={0.7} onPress={() => Alert.alert('Instructions', 'Customize gate codes, security notes, or drop-off spots.')}>
-            <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: 'bold' }}>Add Now ❯</Text>
-          </TouchableOpacity>
-        </GlassCard>
-      </ScrollView>
+              {/* Recipient Details */}
+              <Text style={styles.recipientName}>{addr.name}</Text>
+              <Text style={styles.recipientPhone}>{addr.phone}</Text>
 
-      {/* Add / Edit Address Modal Dialog */}
+              {/* Formatted Address */}
+              <Text style={styles.addressBody}>
+                {addr.house ? `${addr.house}, ` : ''}
+                {addr.street}
+                {addr.landmark ? `, Near ${addr.landmark}` : ''}
+                {'\n'}
+                {addr.city}, {addr.state} - {addr.pincode}
+              </Text>
+
+              {/* Actions Divider */}
+              <View style={styles.cardDivider} />
+
+              {/* Card Actions: Edit & Delete */}
+              <View style={styles.cardActionsRow}>
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  activeOpacity={0.7}
+                  onPress={() => handleOpenEditModal(addr)}
+                >
+                  <Icons.Pencil color="#475569" size={15} />
+                  <Text style={styles.actionBtnText}>Edit</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.deleteActionBtn]}
+                  activeOpacity={0.7}
+                  onPress={() => handleDeleteAddress(addr.id)}
+                >
+                  <Icons.Trash2 color="#EF4444" size={15} />
+                  <Text style={styles.deleteBtnText}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+
+      {/* Add / Edit Address Modal */}
       <Modal
-        visible={isModalOpen}
+        visible={modalVisible}
         animationType="slide"
-        transparent={true}
-        onRequestClose={() => setIsModalOpen(false)}
+        transparent
+        onRequestClose={() => setModalVisible(false)}
       >
-        <View style={styles.modalBackdrop}>
-          <GlassCard style={[styles.modalCard, { backgroundColor: colors.background === '#F8FAFC' ? '#FFFFFF' : '#0B1530', borderColor: colors.cardBorder }]}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalSheet}>
+            {/* Sheet Header */}
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>{editingId ? 'Edit Address' : 'Add New Address'}</Text>
-              <TouchableOpacity onPress={() => setIsModalOpen(false)}>
-                <Icons.X color={colors.text} size={20} />
+              <Text style={styles.modalTitle}>
+                {editingAddressId ? 'Edit Address' : 'Add New Address'}
+              </Text>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setModalVisible(false)}
+              >
+                <Icons.X color="#475569" size={20} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.formContainer}>
-              <Text style={[styles.inputLabel, { color: colors.text }]}>Address Label</Text>
-              <View style={styles.labelButtonRow}>
-                {['Home', 'Work', 'Other', 'Parents Home'].map((lbl) => (
-                  <TouchableOpacity
-                    key={lbl}
-                    style={[
-                      styles.labelSelectorBtn,
-                      { borderColor: colors.cardBorder },
-                      formLabel === lbl && { backgroundColor: colors.primary, borderColor: colors.primary }
-                    ]}
-                    onPress={() => {
-                      setFormLabel(lbl);
-                      if (lbl === 'Home') setFormIcon('Home');
-                      else if (lbl === 'Work') setFormIcon('Briefcase');
-                      else if (lbl === 'Parents Home') setFormIcon('Heart');
-                      else setFormIcon('MapPin');
-                    }}
-                  >
-                    <Text style={[styles.labelSelectorText, { color: colors.text }, formLabel === lbl && { color: '#050B1E', fontWeight: 'bold' }]}>
-                      {lbl}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+            <ScrollView
+              style={styles.modalBody}
+              contentContainerStyle={{ paddingBottom: 24 }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Address Label Selector */}
+              <Text style={styles.formSectionLabel}>Address Type</Text>
+              <View style={styles.labelSelectorRow}>
+                {(['Home', 'Work', 'Other'] as const).map((type) => {
+                  const selected = formLabel === type;
+                  return (
+                    <TouchableOpacity
+                      key={type}
+                      style={[
+                        styles.labelChoiceBtn,
+                        selected && styles.labelChoiceSelected,
+                      ]}
+                      onPress={() => setFormLabel(type)}
+                    >
+                      {type === 'Home' ? (
+                        <Icons.Home color={selected ? '#0F172A' : '#64748B'} size={16} />
+                      ) : type === 'Work' ? (
+                        <Icons.Briefcase color={selected ? '#0F172A' : '#64748B'} size={16} />
+                      ) : (
+                        <Icons.MapPin color={selected ? '#0F172A' : '#64748B'} size={16} />
+                      )}
+                      <Text
+                        style={[
+                          styles.labelChoiceText,
+                          selected && styles.labelChoiceTextSelected,
+                        ]}
+                      >
+                        {type}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
 
-              <Text style={[styles.inputLabel, { color: colors.text }]}>Contact Name</Text>
-              <TextInput
-                style={[styles.textInput, { color: colors.text, borderColor: colors.cardBorder }]}
-                placeholder="Arjun Kumar"
-                placeholderTextColor="rgba(255,255,255,0.3)"
-                value={formName}
-                onChangeText={setFormName}
-              />
+              {/* Recipient Details */}
+              <Text style={styles.formSectionLabel}>Contact Information</Text>
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Full Name *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={formName}
+                  onChangeText={setFormName}
+                  placeholder="e.g. Uma"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
 
-              <Text style={[styles.inputLabel, { color: colors.text }]}>Phone Number</Text>
-              <TextInput
-                style={[styles.textInput, { color: colors.text, borderColor: colors.cardBorder }]}
-                placeholder="+91 98765 43210"
-                placeholderTextColor="rgba(255,255,255,0.3)"
-                keyboardType="phone-pad"
-                value={formPhone}
-                onChangeText={setFormPhone}
-              />
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Mobile Number *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={formPhone}
+                  onChangeText={setFormPhone}
+                  placeholder="10-digit mobile number"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="phone-pad"
+                />
+              </View>
 
-              <Text style={[styles.inputLabel, { color: colors.text }]}>Complete Address</Text>
-              <TextInput
-                style={[styles.textAreaInput, { color: colors.text, borderColor: colors.cardBorder }]}
-                placeholder="Flat/House No., Building Name, Street Address, City, State - Pincode"
-                placeholderTextColor="rgba(255,255,255,0.3)"
-                multiline={true}
-                numberOfLines={3}
-                value={formAddress}
-                onChangeText={setFormAddress}
-              />
+              {/* Address Details */}
+              <Text style={styles.formSectionLabel}>Address Details</Text>
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Flat, House No., Building *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={formHouse}
+                  onChangeText={setFormHouse}
+                  placeholder="e.g. Flat 402, Sunshine Apts"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
 
-              <TouchableOpacity style={styles.submitBtn} onPress={handleSaveAddress}>
-                <Text style={styles.submitBtnText}>Save Address</Text>
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Area, Street, Sector *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={formStreet}
+                  onChangeText={setFormStreet}
+                  placeholder="e.g. 11th Cross, 4th Block, Koramangala"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Landmark (Optional)</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={formLandmark}
+                  onChangeText={setFormLandmark}
+                  placeholder="e.g. Near Sony World Signal"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View style={styles.twoColumnRow}>
+                <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+                  <Text style={styles.fieldLabel}>City *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={formCity}
+                    onChangeText={setFormCity}
+                    placeholder="Bengaluru"
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+
+                <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
+                  <Text style={styles.fieldLabel}>Pincode *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={formPincode}
+                    onChangeText={setFormPincode}
+                    placeholder="6-digit PIN"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="number-pad"
+                    maxLength={6}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>State *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={formState}
+                  onChangeText={setFormState}
+                  placeholder="Karnataka"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              {/* Default Address Checkbox */}
+              <TouchableOpacity
+                style={styles.defaultToggleRow}
+                activeOpacity={0.8}
+                onPress={() => setFormIsDefault(!formIsDefault)}
+              >
+                {formIsDefault ? (
+                  <Icons.CheckSquare color="#F4C400" size={20} />
+                ) : (
+                  <Icons.Square color="#94A3B8" size={20} />
+                )}
+                <Text style={styles.defaultToggleText}>Make this my default address</Text>
+              </TouchableOpacity>
+
+              {/* Submit Button */}
+              <TouchableOpacity
+                style={[styles.saveAddressBtn, submitting && { opacity: 0.6 }]}
+                activeOpacity={0.8}
+                onPress={handleSaveAddress}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#0F172A" size="small" />
+                ) : (
+                  <Text style={styles.saveAddressBtnText}>
+                    {editingAddressId ? 'Update Address' : 'Save Address'}
+                  </Text>
+                )}
               </TouchableOpacity>
             </ScrollView>
-          </GlassCard>
-        </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -390,264 +633,384 @@ export default function MyAddresses() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#050B1E'
+    backgroundColor: '#F8FAFC',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)'
+    borderBottomColor: '#E2E8F0',
   },
-  headerLeftRow: {
-    flexDirection: 'row',
-    alignItems: 'center'
+  headerBackButton: {
+    padding: 4,
   },
-  backBtn: {
-    width: 32,
-    height: 32,
+  headerTitleContainer: {
+    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8
-  },
-  titleWrapper: {
-    justifyContent: 'center'
   },
   headerTitle: {
-    fontSize: 15,
-    fontWeight: 'bold'
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#0F172A',
   },
-  headerSubtitle: {
-    fontSize: 10,
-    color: '#94A3B8',
-    marginTop: 1
-  },
-  addBtn: {
+  headerAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#F4C400',
     paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     borderRadius: 8,
-    backgroundColor: 'rgba(244, 196, 0, 0.1)'
+    gap: 4,
   },
-  addBtnText: {
-    fontSize: 11,
-    fontWeight: 'bold'
+  headerAddBtnText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#0F172A',
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#0F172A',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  errorSubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  retryButton: {
+    backgroundColor: '#F4C400',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+  },
+  retryButtonText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#0F172A',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  emptyIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#FEFCE8',
+    borderWidth: 1,
+    borderColor: '#FEF08A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#0F172A',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  emptyAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F4C400',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    gap: 8,
+  },
+  emptyAddBtnText: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#0F172A',
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40
+    paddingBottom: 40,
   },
-  searchBarRow: {
-    marginBottom: 16
-  },
-  searchInputWrapper: {
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     paddingHorizontal: 12,
-    height: 44
+    paddingVertical: 8,
+    marginBottom: 16,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
-    paddingHorizontal: 8,
-    height: '100%'
+    fontSize: 14,
+    color: '#0F172A',
+    paddingVertical: 2,
   },
-  sectionHeader: {
+  listHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingHorizontal: 4,
   },
-  sectionTitleText: {
+  sectionHeading: {
     fontSize: 13,
-    fontWeight: 'bold'
+    fontWeight: 'bold',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  sectionCountText: {
-    fontSize: 10,
-    color: '#94A3B8'
+  addressCountBadge: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94A3B8',
   },
   addressCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     padding: 16,
-    marginBottom: 14
+    marginBottom: 16,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  defaultCardBorder: {
+    borderColor: '#F4C400',
+    borderWidth: 1.5,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10
+    marginBottom: 12,
   },
-  cardHeaderLeft: {
+  labelBadgeRow: {
     flexDirection: 'row',
-    alignItems: 'center'
-  },
-  iconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10
+    gap: 8,
   },
-  addressLabelText: {
-    fontSize: 13,
-    fontWeight: 'bold'
+  labelIconPill: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addressLabel: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#0F172A',
   },
   defaultBadge: {
-    backgroundColor: 'rgba(244, 196, 0, 0.15)',
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 4,
-    marginTop: 2,
-    alignSelf: 'flex-start'
+    backgroundColor: '#FEFCE8',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FEF08A',
   },
   defaultBadgeText: {
-    color: '#F4C400',
-    fontSize: 8,
-    fontWeight: 'black'
-  },
-  selectorCircle: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 1.5,
-    borderColor: '#94A3B8',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  cardBody: {
-    marginBottom: 14
-  },
-  userNameText: {
-    fontSize: 12,
-    fontWeight: 'bold'
-  },
-  phoneText: {
-    fontSize: 10,
-    color: '#94A3B8',
-    marginTop: 2
-  },
-  fullAddressText: {
     fontSize: 11,
-    lineHeight: 15,
-    marginTop: 6,
-    opacity: 0.8
+    fontWeight: '700',
+    color: '#854D0E',
   },
-  cardActions: {
-    borderTopWidth: 1,
+  radioSelector: {
+    padding: 2,
+  },
+  recipientName: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#0F172A',
+    marginBottom: 2,
+  },
+  recipientPhone: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 8,
+  },
+  addressBody: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  cardDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginBottom: 10,
+  },
+  cardActionsRow: {
     flexDirection: 'row',
-    paddingTop: 10,
-    gap: 16
+    justifyContent: 'flex-start',
+    gap: 20,
   },
   actionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4
+    paddingVertical: 4,
+    gap: 6,
   },
   actionBtnText: {
-    fontSize: 11,
-    fontWeight: 'bold'
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
   },
-  instructionsCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    marginTop: 8,
-    borderColor: 'rgba(239, 68, 68, 0.15)',
-    backgroundColor: 'rgba(239, 68, 68, 0.02)'
+  deleteActionBtn: {
+    marginLeft: 8,
   },
-  instructionsLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  deleteBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#EF4444',
+  },
+  modalOverlay: {
     flex: 1,
-    marginRight: 10
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    justifyContent: 'flex-end',
   },
-  instructionsTitle: {
-    fontSize: 11,
-    fontWeight: 'bold'
-  },
-  instructionsSubtitle: {
-    fontSize: 9,
-    color: '#94A3B8',
-    marginTop: 1
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(5, 11, 30, 0.7)',
-    justifyContent: 'flex-end'
-  },
-  modalCard: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderWidth: 1,
-    padding: 20,
-    paddingBottom: 40,
-    maxHeight: height * 0.8
+  modalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
   },
   modalHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 20
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
   modalTitle: {
-    fontSize: 16,
-    fontWeight: 'bold'
-  },
-  formContainer: {
-    gap: 14
-  },
-  inputLabel: {
-    fontSize: 11,
+    fontSize: 17,
     fontWeight: 'bold',
-    opacity: 0.8
+    color: '#0F172A',
   },
-  labelButtonRow: {
+  modalCloseBtn: {
+    padding: 4,
+  },
+  modalBody: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+  },
+  formSectionLabel: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+    marginTop: 6,
+  },
+  labelSelectorRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
+    gap: 10,
+    marginBottom: 16,
   },
-  labelSelectorBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  labelSelectorText: {
-    fontSize: 11
-  },
-  textInput: {
-    borderWidth: 1,
+  labelChoiceBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
     borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 44,
-    fontSize: 13
-  },
-  textAreaInput: {
     borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    gap: 6,
+  },
+  labelChoiceSelected: {
+    backgroundColor: '#FEFCE8',
+    borderColor: '#F4C400',
+  },
+  labelChoiceText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  labelChoiceTextSelected: {
+    fontWeight: 'bold',
+    color: '#0F172A',
+  },
+  formGroup: {
+    marginBottom: 14,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 6,
+  },
+  formInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 13,
-    height: 72,
-    textAlignVertical: 'top'
+    fontSize: 14,
+    color: '#0F172A',
   },
-  submitBtn: {
+  twoColumnRow: {
+    flexDirection: 'row',
+  },
+  defaultToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 10,
+  },
+  defaultToggleText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  saveAddressBtn: {
     backgroundColor: '#F4C400',
     borderRadius: 12,
     height: 48,
-    alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 10
+    alignItems: 'center',
+    marginTop: 12,
   },
-  submitBtnText: {
-    color: '#050B1E',
+  saveAddressBtnText: {
+    fontSize: 15,
     fontWeight: 'bold',
-    fontSize: 14
-  }
+    color: '#0F172A',
+  },
 });

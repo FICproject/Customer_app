@@ -30,15 +30,19 @@ const darkColors = {
 };
 
 const lightColors = {
-  primary: '#D97706',
-  background: '#F8FAFC',
-  secondary: '#0F172A',
-  grayDark: '#F1F5F9',
+  primary: '#F5B800',
+  background: '#FFF8E8',
+  secondary: '#101827',
+  grayDark: '#FFF1C7',
   grayLight: '#64748B',
-  cardBg: 'rgba(255, 255, 255, 0.85)',
-  cardBorder: 'rgba(15, 23, 42, 0.08)',
-  text: '#0F172A',
+  cardBg: '#FFFFFF',
+  cardBorder: '#F1EAD8',
+  text: '#101827',
 };
+
+
+
+
 
 const getThemeColors = (mode: ThemeMode) => {
   if (mode === 'system') {
@@ -49,8 +53,8 @@ const getThemeColors = (mode: ThemeMode) => {
 };
 
 export const useThemeStore = create<ThemeState>((set) => ({
-  themeMode: 'dark', // default to dark
-  colors: darkColors,
+  themeMode: 'light', // default to white/light theme
+  colors: lightColors,
   setThemeMode: (mode) => {
     set({
       themeMode: mode,

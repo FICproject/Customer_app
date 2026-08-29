@@ -243,9 +243,10 @@ const styles = StyleSheet.create({
   },
   pointsValue: {
     fontSize: 14,
-    fontWeight: 'black',
+    fontWeight: '900',
     color: '#FFF',
   },
+
   qrContainer: {
     width: 68,
     height: 68,

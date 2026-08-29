@@ -67,8 +67,8 @@ export const SIDEBAR_DATA: any = {
         items: ['Hotels', 'Resorts', 'Homestays', 'Service Apartments', 'Luxury Villas', 'Corporate Stay']
       },
       Travel: {
-        icon: 'Plane',
-        items: ['Flight Booking', 'Train Booking', 'Bus Booking', 'Tour Packages', 'Visa Assistance', 'Passport Assistance', 'Travel Insurance', 'Car Rentals', 'Holiday Packages']
+        icon: 'Bus',
+        items: ['AC Sleeper', 'Volvo Multi-Axle', 'Non-AC Sleeper', 'AC Seater', 'Electric Bus', 'Intercity Express', 'Luxury Coaches']
       },
       'Real Estate': {
         icon: 'MapPin',
@@ -150,55 +150,35 @@ export const SIDEBAR_DATA: any = {
     }
   },
   'Daily Needs': {
-    icon: 'Milk',
+    icon: 'ShoppingBag',
     subcategories: {
-      Grocery: {
-        icon: 'ShoppingBasket',
-        items: ['Rice', 'Wheat', 'Flour', 'Rava', 'Pulses', 'Dal', 'Sugar', 'Salt', 'Cooking Oil', 'Spices', 'Biscuits', 'Snacks', 'Noodles', 'Breakfast Cereals', 'Dry Fruits']
-      },
       'Fruits & Vegetables': {
         icon: 'Apple',
-        items: ['Fresh Apple', 'Fresh Banana', 'Fresh Orange', 'Fresh Mango', 'Fresh Grapes', 'Fresh Pomegranate', 'Fresh Onion', 'Fresh Tomato', 'Fresh Potato', 'Fresh Carrot', 'Fresh Cabbage', 'Green Vegetables']
+        items: ['Tomato', 'Potato', 'Onion', 'Banana', 'Apple', 'Carrot', 'Spinach', 'Lemon', 'Cucumber', 'Mango']
       },
-      Dairy: {
+      'Grocery & Staples': {
+        icon: 'Package',
+        items: ['Wheat Flour / Atta', 'Basmati Rice', 'Toor Dal', 'Sugar', 'Iodized Salt', 'Poha', 'Rava', 'Maida']
+      },
+      'Dairy, Bread & Eggs': {
         icon: 'Milk',
-        items: ['Milk', 'Curd', 'Butter', 'Ghee', 'Cheese', 'Paneer', 'Yogurt', 'Ice Cream', 'Flavored Milk']
+        items: ['Fresh Milk', 'Curd & Yogurt', 'Paneer', 'Brown & White Bread', 'Farm Eggs', 'Butter & Ghee', 'Cheese']
       },
-      'Water & Beverages': {
-        icon: 'Droplet',
-        items: ['Water Cans', 'Mineral Water', 'RO Water Delivery', 'Tea', 'Coffee', 'Juices', 'Soft Drinks', 'Energy Drinks', 'Health Drinks']
+      'Snacks & Beverages': {
+        icon: 'Cookie',
+        items: ['Biscuits & Cookies', 'Potato Chips', 'Fruit Juices', 'Instant Coffee', 'Tea Powder', 'Namkeen & Bhujia']
       },
-      'Household Essentials': {
-        icon: 'Home',
-        items: ['Floor Cleaner', 'Toilet Cleaner', 'Glass Cleaner', 'Disinfectants', 'Dishwash Liquid', 'Scrub Pads', 'Aluminum Foil', 'Buckets', 'Mops', 'Dustbins']
+      'Oil & Masala': {
+        icon: 'Flame',
+        items: ['Sunflower Oil', 'Groundnut Oil', 'Mustard Oil', 'Turmeric Powder', 'Red Chilli Powder', 'Garam Masala']
+      },
+      'Household': {
+        icon: 'Sparkles',
+        items: ['Detergent Powder', 'Dishwash Gel', 'Floor Cleaner', 'Garbage Bags', 'Fabric Conditioner', 'Glass Cleaner']
       },
       'Personal Care': {
-        icon: 'Sparkles',
-        items: ['Soap', 'Body Wash', 'Shampoo', 'Conditioner', 'Face Wash', 'Razor', 'Trimmer', 'Hair Oil', 'Deodorants', 'Toothpaste', 'Toothbrush']
-      },
-      'Baby Care': {
-        icon: 'Baby',
-        items: ['Baby Diapers', 'Baby Wipes', 'Baby Powder', 'Baby Soap', 'Baby Shampoo', 'Baby Food', 'Feeding Bottles']
-      },
-      Pharmacy: {
-        icon: 'Activity',
-        items: ['OTC Medicines', 'Pain Relief Products', 'Cold & Cough Remedies', 'Thermometer', 'BP Monitor', 'Glucose Monitor', 'First Aid Kit', 'Sanitizers', 'Face Masks']
-      },
-      'Pet Care': {
-        icon: 'Dog',
-        items: ['Dog Food', 'Cat Food', 'Pet Shampoo', 'Pet Toys', 'Pet Accessories', 'Pet Medicines']
-      },
-      Bakery: {
-        icon: 'Cookie',
-        items: ['Bread', 'Cakes', 'Buns', 'Cookies', 'Fresh Bakery Items']
-      },
-      'Organic Products': {
-        icon: 'Leaf',
-        items: ['Organic Vegetables', 'Organic Fruits', 'Organic Rice', 'Organic Spices', 'Natural Health Products']
-      },
-      'Utility Products': {
-        icon: 'Zap',
-        items: ['Batteries', 'Power Banks', 'Chargers', 'LED Bulbs', 'Extension Boards', 'Inverters']
+        icon: 'Heart',
+        items: ['Shampoo & Conditioner', 'Bathing Soap', 'Toothpaste & Brush', 'Face Wash', 'Body Lotion', 'Deodorant']
       }
     }
   },
@@ -272,83 +252,31 @@ export const SIDEBAR_DATA: any = {
     }
   },
   Travel: {
-    icon: 'Compass',
+    icon: 'Bus',
     subcategories: {
-      'Flight Booking': {
-        icon: 'Plane',
-        items: ['Domestic Flights', 'International Flights', 'One-Way Flights', 'Round Trip Flights', 'Multi-City Flights', 'Business Class', 'First Class', 'Charter Flights']
-      },
-      'Train Booking': {
-        icon: 'Subway',
-        items: ['Express Trains', 'Superfast Trains', 'Premium Trains', 'Tatkal Booking', 'Tourist Trains', 'Luxury Trains']
-      },
       'Bus Booking': {
         icon: 'Bus',
-        items: ['Government Buses', 'Private Buses', 'Sleeper Buses', 'AC Buses', 'Luxury Coaches', 'Volvo Services']
+        items: ['AC Sleeper', 'Volvo Multi-Axle', 'Non-AC Sleeper', 'AC Seater', 'Electric Bus', 'Intercity Express', 'Luxury Coaches']
       },
-      'Cab Services': {
-        icon: 'Car',
-        items: ['Local Taxi', 'Airport Transfer', 'Outstation Cabs', 'Luxury Cars', 'Chauffeur Services', 'Self-Drive Cars']
+      'AC Sleeper': {
+        icon: 'Bed',
+        items: ['Volvo AC Sleeper', 'Scania AC Sleeper', 'BharatBenz AC Sleeper', 'Multi-Axle AC Sleeper']
       },
-      'Car Rental': {
-        icon: 'Key',
-        items: ['Self Drive Cars', 'Monthly Rental', 'Luxury Car Rental', 'Corporate Rental', 'Tourist Vehicles']
+      'Volvo Multi-Axle': {
+        icon: 'Bus',
+        items: ['Volvo 9600', 'Volvo B11R', 'Airavat Club Class', 'Multi-Axle Semi-Sleeper']
       },
-      'Bike Rental': {
-        icon: 'Bike',
-        items: ['Scooters', 'Motorcycles', 'Premium Bikes', 'Adventure Bikes']
+      'AC Seater': {
+        icon: 'Armchair',
+        items: ['AC Pushback Seater', 'Executive AC Seater', 'Hi-Tech AC Seater']
       },
-      'Tour Packages': {
-        icon: 'Globe',
-        items: ['Domestic Tours', 'International Tours', 'Weekend Trips', 'Family Packages', 'Group Tours', 'Couple Packages']
+      'Non-AC Sleeper': {
+        icon: 'BedDouble',
+        items: ['Non-AC Sleeper (2+1)', 'Non-AC Seater/Sleeper', 'Express Sleeper']
       },
-      'Honeymoon Packages': {
-        icon: 'Heart',
-        items: ['Beach Destinations', 'Hill Stations', 'International Honeymoon', 'Luxury Honeymoon Resorts']
-      },
-      'Family Travel': {
-        icon: 'Users',
-        items: ['Family Holiday Packages', 'Theme Parks', 'Resorts', 'Family Adventures']
-      },
-      'Corporate Travel': {
-        icon: 'Briefcase',
-        items: ['Business Flights', 'Hotel Booking', 'Corporate Cab Services', 'Employee Travel Management']
-      },
-      'Adventure Travel': {
-        icon: 'Compass',
-        items: ['Trekking', 'Camping', 'Wildlife Safari', 'Mountain Climbing', 'Water Sports', 'Adventure Tours']
-      },
-      'Religious Travel': {
-        icon: 'Church',
-        items: ['Temple Tours', 'Pilgrimage Packages', 'Spiritual Retreats', 'Holy City Tours']
-      },
-      'Holiday Packages': {
-        icon: 'Sun',
-        items: ['Beach Holidays', 'Hill Station Holidays', 'Island Vacations', 'Cruise Vacations']
-      },
-      'Cruise Travel': {
-        icon: 'Ship',
-        items: ['Domestic Cruises', 'International Cruises', 'Luxury Cruises', 'Family Cruises']
-      },
-      'Visa Services': {
-        icon: 'Contact',
-        items: ['Tourist Visa', 'Business Visa', 'Student Visa', 'Work Visa', 'Visa Consultation']
-      },
-      'Passport Services': {
-        icon: 'BookOpen',
-        items: ['New Passport', 'Renewal', 'Tatkal Passport', 'Passport Assistance']
-      },
-      'International Travel': {
-        icon: 'Globe2',
-        items: ['International Flights', 'International Hotels', 'Global Packages', 'Travel Assistance']
-      },
-      'Travel Essentials': {
-        icon: 'Luggage',
-        items: ['Travel Insurance', 'Forex Services', 'SIM Cards', 'Travel Accessories', 'Airport Lounge Access']
-      },
-      'Emergency Travel': {
-        icon: 'HeartPulse',
-        items: ['Medical Emergency Travel', 'Emergency Ticket Booking', 'Travel Support', 'Insurance Claims']
+      'Electric Bus': {
+        icon: 'Zap',
+        items: ['Intercity EV Bus', 'Smart Electric Coach', 'Greenline Electric']
       }
     }
   },
