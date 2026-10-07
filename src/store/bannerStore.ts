@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiFetch } from '../services/api';
 
 export interface BannerItem {
@@ -93,60 +95,69 @@ export const DEFAULT_BANNERS: BannerItem[] = [
   },
 ];
 
-export const useBannerStore = create<BannerStore>((set) => ({
-  banners: DEFAULT_BANNERS,
-  isLoading: false,
+export const useBannerStore = create<BannerStore>()(
+  persist(
+    (set, get) => ({
+      banners: DEFAULT_BANNERS,
+      isLoading: false,
 
-  loadBanners: async () => {
-    set({ isLoading: true });
-    try {
-      const res = await apiFetch('/banners');
-      if (res && res.data && Array.isArray(res.data) && res.data.length > 0) {
-        set({ banners: res.data, isLoading: false });
-      } else {
-        set({ banners: DEFAULT_BANNERS, isLoading: false });
-      }
-    } catch (err) {
-      console.warn('[BannerStore] Failed to load banners from MongoDB, using defaults:', err);
-      set({ banners: DEFAULT_BANNERS, isLoading: false });
-    }
-  },
+      loadBanners: async () => {
+        set({ isLoading: true });
+        try {
+          const res = await apiFetch('/banners');
+          if (res && res.data && Array.isArray(res.data) && res.data.length > 0) {
+            set({ banners: res.data, isLoading: false });
+          } else {
+            const current = get().banners;
+            set({ banners: current && current.length > 0 ? current : DEFAULT_BANNERS, isLoading: false });
+          }
+        } catch (err) {
+          console.warn('[BannerStore] Failed to load banners from MongoDB, using cached/defaults:', err);
+          const current = get().banners;
+          set({ banners: current && current.length > 0 ? current : DEFAULT_BANNERS, isLoading: false });
+        }
+      },
 
-  addVendorBanner: async (newBannerData) => {
-    const newBanner: BannerItem = {
-      ...newBannerData,
-      id: `banner_${Date.now()}`,
-    };
-    try {
-      const res = await apiFetch('/banners', {
-        method: 'POST',
-        body: JSON.stringify(newBanner),
-      });
-      if (res && res.data) {
+      addVendorBanner: async (newBannerData) => {
+        const newBanner: BannerItem = {
+          ...newBannerData,
+          id: `banner_${Date.now()}`,
+        };
+        // 1. Immediate memory-first update (0ms UI delay)
         set((state) => ({
-          banners: [res.data, ...state.banners],
+          banners: [newBanner, ...state.banners],
         }));
-        return res.data;
-      }
-    } catch (err) {
-      console.warn('[BannerStore] Error adding banner to MongoDB:', err);
-    }
-    set((state) => ({
-      banners: [newBanner, ...state.banners],
-    }));
-    return newBanner;
-  },
 
-  removeBanner: async (bannerId) => {
-    try {
-      await apiFetch(`/banners/${bannerId}`, {
-        method: 'DELETE',
-      });
-    } catch (err) {
-      console.warn('[BannerStore] Error removing banner from MongoDB:', err);
+        // 2. Background sync
+        apiFetch('/banners', {
+          method: 'POST',
+          body: JSON.stringify(newBanner),
+        }).catch((err) => {
+          console.warn('[BannerStore] Background banner sync notice:', err);
+        });
+
+        return newBanner;
+      },
+
+      removeBanner: async (bannerId) => {
+        // 1. Immediate memory-first update
+        set((state) => ({
+          banners: state.banners.filter((b) => b.id !== bannerId),
+        }));
+
+        // 2. Background sync
+        apiFetch(`/banners/${bannerId}`, {
+          method: 'DELETE',
+        }).catch((err) => {
+          console.warn('[BannerStore] Background remove banner notice:', err);
+        });
+      },
+    }),
+    {
+      name: 'connect_app_banner_storage',
+      storage: createJSONStorage(() => AsyncStorage),
+      partialize: (state) => ({ banners: state.banners }),
     }
-    set((state) => ({
-      banners: state.banners.filter((b) => b.id !== bannerId),
-    }));
-  },
-}));
+  )
+);
+

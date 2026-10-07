@@ -1,10 +1,16 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, useWindowDimensions, Alert, Animated, Modal, TextInput, Dimensions, RefreshControl, PermissionsAndroid, Platform, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, useWindowDimensions, Alert, Animated, Modal, TextInput, Dimensions, RefreshControl, PermissionsAndroid, Platform, ActivityIndicator, Linking, BackHandler, StatusBar } from 'react-native';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import {
+  setupVoiceListeners,
+  cleanupVoiceListeners,
+  startVoiceRecording,
+  stopVoiceRecording,
+} from '../../utils/safeVoice';
 
 
 
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { CustomerStackParamList } from '../../navigation/AppNavigator';
 import { useAuthStore } from '../../store/authStore';
@@ -12,11 +18,11 @@ import GlassCard from '../../components/GlassCard';
 import { useUIStore } from '../../store/uiStore';
 import MembershipCard from '../../components/MembershipCard';
 import * as Icons from 'lucide-react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SIDEBAR_DATA } from './sidebarData';
 import { useOrderStore } from '../../store/orderStore';
-import { apiFetch } from '../../services/api';
-import { useCartStore } from '../../store/cartStore';
+import { apiFetch, resolveImageUrl } from '../../services/api';
+import { useCartStore, isCartableCategory } from '../../store/cartStore';
 import CartModal from '../../components/CartModal';
 import { useWishlistStore } from '../../store/wishlistStore';
 import WishlistModal from '../../components/WishlistModal';
@@ -26,9 +32,12 @@ import VendorBannerModal from '../../components/VendorBannerModal';
 import ProductCard from '../../components/ProductCard';
 import { useToastStore } from '../../store/toastStore';
 import { useActivityStore } from '../../store/activityStore';
-import { useLanguageStore, LANGUAGES_LIST } from '../../store/languageStore';
+import { useLanguageStore, LANGUAGES_LIST, useTranslation } from '../../store/languageStore';
 import { useLocationStore, INDIAN_STATES_AND_CITIES } from '../../store/locationStore';
 import { useNotificationStore } from '../../store/notificationStore';
+import { getRelevantProductImage } from '../../utils/productImages';
+import { openRespectivePage } from '../../utils/navigationHelpers';
+import { useAuthGuardStore } from '../../store/authGuardStore';
 
 
 
@@ -43,7 +52,7 @@ const DISCOVERY_CATEGORIES = [
   { name: 'Daily Needs', icon: 'Milk', color: '#10B981', bg: 'rgba(16, 185, 129, 0.12)' },
   { name: 'Food', icon: 'Utensils', color: '#EC4899', bg: 'rgba(236, 72, 153, 0.12)' },
   { name: 'Stay', icon: 'Bed', color: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.12)' },
-  { name: 'Travel', icon: 'Plane', color: '#F97316', bg: 'rgba(249, 115, 22, 0.12)' },
+  { name: 'Travel', icon: 'Bus', color: '#F97316', bg: 'rgba(249, 115, 22, 0.12)' },
   { name: 'Jobs', icon: 'Briefcase', color: '#14B8A6', bg: 'rgba(20, 184, 166, 0.12)' },
 ];
 
@@ -56,7 +65,7 @@ const HAPPENING_NEAR_YOU = [
     rating: '4.9 ★',
     distance: '1.2 km away',
     offerText: 'From ₹299',
-    ctaText: 'Book Now',
+    ctaText: 'Book Service',
     image: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=400&auto=format&fit=crop&q=80',
     targetCategory: 'Services',
   },
@@ -124,7 +133,7 @@ const CURATED_HOME_PRODUCTS = [
     discount: '18% OFF',
     seller: 'Organic Harvest Store',
     tag: 'EXPRESS 15 MIN',
-    image: 'https://images.unsplash.com/photo-1528750901443-e98fdc48a49a?w=500&auto=format&fit=crop&q=80',
+    image: 'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=500&auto=format&fit=crop&q=80',
   },
   {
     id: 'hp_4',
@@ -154,16 +163,16 @@ const CURATED_HOME_PRODUCTS = [
   },
   {
     id: 'hp_6',
-    name: 'IndiGo Express Flight (BLR ➔ DEL)',
+    name: 'Intercity Volvo AC Bus (BLR ➔ HYD)',
     category: 'Travel',
-    price: '₹4,850',
-    originalPrice: '₹5,600',
-    rating: 4.7,
+    price: '₹850',
+    originalPrice: '₹1,200',
+    rating: 4.8,
     ratingCount: 1820,
-    discount: '13% OFF',
-    seller: 'IndiGo Official',
-    tag: 'INSTANT BOOK',
-    image: 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=500&auto=format&fit=crop&q=80',
+    discount: '29% OFF',
+    seller: 'KSRTC Volvo Express',
+    tag: 'INSTANT BUS BOOKING',
+    image: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?w=500&auto=format&fit=crop&q=80',
   },
 ];
 
@@ -329,10 +338,11 @@ export default function HomeDashboard() {
 
   // Auth Store Hooks
   const currentUser = useAuthStore((state) => state.currentUser);
+  const isGuestUser = !currentUser || currentUser.isGuest || currentUser.id === 'guest_user' || Boolean(currentUser.name && currentUser.name.toLowerCase().includes('guest'));
   const logout = useAuthStore((state) => state.logout);
   const pendingProduct = useAuthStore((state) => state.pendingPurchaseProduct);
   const setPendingProduct = useAuthStore((state) => state.setPendingPurchaseProduct);
-  const displayName = currentUser?.name || 'Connect Member';
+  const displayName = isGuestUser ? 'Guest User' : currentUser?.name || 'Connect Member';
 
   // Cart Store Hooks
   const [isCartVisible, setIsCartVisible] = useState(false);
@@ -348,6 +358,7 @@ export default function HomeDashboard() {
 
   // Modals & UI States
   const [isPartnersModalVisible, setIsPartnersModalVisible] = useState(false);
+  const [partnerCatFilter, setPartnerCatFilter] = useState('All');
   const [isOffersModalVisible, setIsOffersModalVisible] = useState(false);
   const [isVendorBannerModalOpen, setIsVendorBannerModalOpen] = useState(false);
   const [isNotifDropdownOpen, setIsNotifDropdownOpen] = useState(false);
@@ -374,14 +385,16 @@ export default function HomeDashboard() {
   const themeMode = useThemeStore((state) => state.themeMode);
   const setThemeMode = useThemeStore((state) => state.setThemeMode);
   const colors = useThemeStore((state) => state.colors);
-  const isLightActive = (themeMode === 'light') || (themeMode === 'system' && colors.text === '#0F172A') || colors.background !== '#050B1E';
+  const isDark = useThemeStore((state) => state.isDark);
+  const isLightActive = !isDark;
   const activeContentColor = isLightActive ? '#FFFFFF' : '#050B1E';
 
   // Sidebar Menu State & Animations
   const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
   const setIsSidebarOpen = useUIStore((state) => state.setIsSidebarOpen);
-  const slideAnim = useRef(new Animated.Value(width)).current;
+  const slideAnim = useRef(new Animated.Value(-width * 0.85)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [headerHeight, setHeaderHeight] = useState(0);
 
   // Universal Search & Voice Search State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -391,6 +404,7 @@ export default function HomeDashboard() {
   const [capturedImageUri, setCapturedImageUri] = useState<string | null>(null);
   const [isVisualSearching, setIsVisualSearching] = useState(false);
   const voiceTimeoutRef = useRef<any>(null);
+  const searchInputRef = useRef<TextInput>(null);
 
   // In-search waveform animations
   const wave1 = useRef(new Animated.Value(6)).current;
@@ -400,8 +414,7 @@ export default function HomeDashboard() {
   const micGlowAnim = useRef(new Animated.Value(1)).current;
 
   // Language & Location Store Hooks
-  const currentLanguage = useLanguageStore((state) => state.currentLanguage);
-  const setLanguage = useLanguageStore((state) => state.setLanguage);
+  const { t, currentLanguage, setLanguage } = useTranslation();
   const [isSidebarLanguageView, setIsSidebarLanguageView] = useState(false);
 
   const selectedState = useLocationStore((state) => state.selectedState);
@@ -413,30 +426,65 @@ export default function HomeDashboard() {
   const [locationSearchQuery, setLocationSearchQuery] = useState('');
   const [expandedStateName, setExpandedStateName] = useState<string | null>('Karnataka');
 
+  // Android hardware back button handler for sidebar
+  useEffect(() => {
+    if (!isSidebarOpen) return;
+    const backAction = () => {
+      if (isSidebarLanguageView) {
+        setIsSidebarLanguageView(false);
+        return true;
+      }
+      if (isSidebarLocationView) {
+        setIsSidebarLocationView(false);
+        return true;
+      }
+      setIsSidebarOpen(false);
+      return true;
+    };
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [isSidebarOpen, isSidebarLanguageView, isSidebarLocationView, setIsSidebarOpen]);
+
   const loadHomeData = useCallback(async () => {
     try {
+      let dynamicProds: any[] = [];
+      const prodResVal: any = await apiFetch('/products', { skipCache: true }).catch(() => null);
+      if (prodResVal) {
+        if (Array.isArray(prodResVal.data) && prodResVal.data.length > 0) dynamicProds = prodResVal.data;
+        else if (Array.isArray(prodResVal.products) && prodResVal.products.length > 0) dynamicProds = prodResVal.products;
+        else if (Array.isArray(prodResVal.items) && prodResVal.items.length > 0) dynamicProds = prodResVal.items;
+        else if (Array.isArray(prodResVal) && prodResVal.length > 0) dynamicProds = prodResVal;
+      }
+
+      if (dynamicProds.length === 0) {
+        const vendorProdVal: any = await apiFetch('/vendor/products', { skipCache: true }).catch(() => null);
+        if (vendorProdVal) {
+          if (Array.isArray(vendorProdVal.data) && vendorProdVal.data.length > 0) dynamicProds = vendorProdVal.data;
+          else if (Array.isArray(vendorProdVal.products) && vendorProdVal.products.length > 0) dynamicProds = vendorProdVal.products;
+          else if (Array.isArray(vendorProdVal) && vendorProdVal.length > 0) dynamicProds = vendorProdVal;
+        }
+      }
+
+      if (dynamicProds.length > 0) {
+        setDbProducts(dynamicProds);
+      } else {
+        setDbProducts(CURATED_HOME_PRODUCTS);
+      }
+
       const results = await Promise.allSettled([
-        apiFetch('/products'),
         apiFetch('/vendors'),
         apiFetch('/offers'),
         useBannerStore.getState().loadBanners(),
       ]);
 
-      const prodRes = results[0];
-      if (prodRes.status === 'fulfilled' && prodRes.value?.data && Array.isArray(prodRes.value.data) && prodRes.value.data.length > 0) {
-        setDbProducts(prodRes.value.data);
-      } else {
-        setDbProducts(CURATED_HOME_PRODUCTS);
-      }
-
-      const vendorRes = results[1];
+      const vendorRes = results[0];
       if (vendorRes.status === 'fulfilled' && vendorRes.value?.data && Array.isArray(vendorRes.value.data) && vendorRes.value.data.length > 0) {
         setDbVendors(vendorRes.value.data);
       } else {
         setDbVendors(DEFAULT_VENDORS);
       }
 
-      const offerRes = results[2];
+      const offerRes = results[1];
       if (offerRes.status === 'fulfilled' && offerRes.value?.data && Array.isArray(offerRes.value.data)) {
         setDbOffers(offerRes.value.data);
       }
@@ -449,14 +497,20 @@ export default function HomeDashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    loadHomeData();
-  }, [loadHomeData]);
+  // Auto-refresh silently in background whenever screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadHomeData();
+      useOrderStore.getState().loadAllOrders().catch(() => {});
+    }, [loadHomeData])
+  );
 
-  // Banner Auto-slide every 4 seconds
+  // Banner Auto-slide every 4 seconds (pauses when user holds touch down)
+  const [isBannerPaused, setIsBannerPaused] = useState(false);
+
   useEffect(() => {
     const count = banners?.length || 0;
-    if (count === 0) return;
+    if (count === 0 || isBannerPaused) return;
 
     const timer = setInterval(() => {
       setActiveBannerIndex((prevIndex) => {
@@ -470,7 +524,7 @@ export default function HomeDashboard() {
     }, 4000);
 
     return () => clearInterval(timer);
-  }, [width, banners?.length]);
+  }, [width, banners?.length, isBannerPaused]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -486,32 +540,32 @@ export default function HomeDashboard() {
     }
   }, [loadHomeData]);
 
-  // Sidebar animation effect
+  // Sidebar animation effect (Opens smoothly from LEFT)
   useEffect(() => {
     if (isSidebarOpen) {
       Animated.parallel([
         Animated.timing(slideAnim, {
           toValue: 0,
-          duration: 300,
-          useNativeDriver: false,
+          duration: 250,
+          useNativeDriver: true,
         }),
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 300,
-          useNativeDriver: false,
+          duration: 250,
+          useNativeDriver: true,
         }),
       ]).start();
     } else {
       Animated.parallel([
         Animated.timing(slideAnim, {
-          toValue: width,
-          duration: 250,
-          useNativeDriver: false,
+          toValue: -width * 0.85,
+          duration: 200,
+          useNativeDriver: true,
         }),
         Animated.timing(fadeAnim, {
           toValue: 0,
-          duration: 250,
-          useNativeDriver: false,
+          duration: 200,
+          useNativeDriver: true,
         }),
       ]).start();
     }
@@ -559,29 +613,111 @@ export default function HomeDashboard() {
     };
   }, [isListening, wave1, wave2, wave3, wave4, micGlowAnim]);
 
+  // Register real Android Speech Recognition Listeners
+  useEffect(() => {
+    let resultTimer: any = null;
+
+    function onSpeechPartialResults(e: any) {
+      const partialText = Array.isArray(e?.value) ? e.value[0] : (typeof e?.value === 'string' ? e.value : '');
+      if (partialText) {
+        setSearchQuery(partialText);
+      }
+    }
+
+    function onSpeechResults(e: any) {
+      const text = Array.isArray(e?.value) ? e.value[0] : (typeof e?.value === 'string' ? e.value : (e?.results?.[0] || ''));
+      if (text) {
+        setSearchQuery(text);
+        showToast(`Voice recognized: "${text}"`);
+        useActivityStore.getState().recordSearch(text);
+
+        if (resultTimer) clearTimeout(resultTimer);
+        resultTimer = setTimeout(() => {
+          setIsListening(false);
+          if (voiceTimeoutRef.current) {
+            clearTimeout(voiceTimeoutRef.current);
+            voiceTimeoutRef.current = null;
+          }
+        }, 800);
+      }
+    }
+
+    function onSpeechError(e: any) {
+      const errCode = e?.error?.code || e?.error?.message || e?.error;
+      console.warn('[VoiceSearch] Speech error:', errCode);
+
+      // Non-fatal error code 7 (no match yet), keep listening window active
+      if (String(errCode) === '7' || String(errCode).includes('7')) {
+        return;
+      }
+
+      if (voiceTimeoutRef.current) {
+        clearTimeout(voiceTimeoutRef.current);
+        voiceTimeoutRef.current = null;
+      }
+      setIsListening(false);
+      showToast("Couldn't hear speech clearly. Type to search.");
+      setTimeout(() => searchInputRef.current?.focus(), 200);
+    }
+
+    function onSpeechEnd() {
+      // Speech chunk ended; let full 7s window or speech results handle closure
+    }
+
+    setupVoiceListeners({
+      onSpeechPartialResults,
+      onSpeechResults,
+      onSpeechError,
+      onSpeechEnd,
+    });
+
+    return () => {
+      if (resultTimer) clearTimeout(resultTimer);
+      if (voiceTimeoutRef.current) {
+        clearTimeout(voiceTimeoutRef.current);
+      }
+      cleanupVoiceListeners();
+    };
+  }, [showToast]);
+
   // Voice Listening Controller
-  const stopVoiceListening = useCallback(() => {
+  const stopVoiceListening = useCallback(async () => {
     if (voiceTimeoutRef.current) {
       clearTimeout(voiceTimeoutRef.current);
       voiceTimeoutRef.current = null;
     }
-    setIsListening(false);
-  }, []);
-
-  const startVoiceListening = useCallback(() => {
-    if (voiceTimeoutRef.current) clearTimeout(voiceTimeoutRef.current);
-    setIsListening(true);
-    setVoiceError(null);
-    setSearchQuery('');
-
-    // Capture Speech: Transcribe voice speech directly into search query
-    voiceTimeoutRef.current = setTimeout(() => {
-      const recognized = 'Bose headphones';
-      setSearchQuery(recognized);
+    try {
+      await stopVoiceRecording();
+    } catch (e) {
+      console.warn('Voice stop error:', e);
+    } finally {
       setIsListening(false);
-      useActivityStore.getState().recordSearch(recognized);
-    }, 2800);
+    }
   }, []);
+
+  const startVoiceListening = useCallback(async () => {
+    setIsListening(true);
+    setSearchQuery('');
+    showToast('Listening... Speak now 🎙️');
+
+    if (voiceTimeoutRef.current) {
+      clearTimeout(voiceTimeoutRef.current);
+    }
+
+    // Safety timeout: 7 seconds active listening window
+    voiceTimeoutRef.current = setTimeout(() => {
+      stopVoiceRecording().catch(() => {});
+      setIsListening(false);
+      showToast('Listening complete. Type or speak again.');
+      setTimeout(() => searchInputRef.current?.focus(), 200);
+    }, 7000);
+
+    try {
+      await startVoiceRecording('en-IN');
+    } catch (err: any) {
+      console.warn('Voice start warning:', err);
+    }
+  }, [showToast]);
 
   // Microphone Permission & Voice Search Handler
   const handleMicPress = async (e?: any) => {
@@ -600,7 +736,7 @@ export default function HomeDashboard() {
           PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
           {
             title: 'Microphone Permission Required',
-            message: 'Connect App needs microphone access for Voice Search.',
+            message: 'Connect Mobile app needs microphone access for Voice Search.',
             buttonPositive: 'Allow',
             buttonNegative: 'Cancel',
           }
@@ -608,16 +744,17 @@ export default function HomeDashboard() {
         if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
           Alert.alert(
             'Microphone Permission Required',
-            'Please grant microphone permission in Settings to use Voice Search.',
+            'Please grant microphone permission in device settings to use Voice Search.',
             [
               { text: 'Cancel', style: 'cancel' },
-              { text: 'Open Settings', onPress: () => Linking.openSettings() }
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
             ]
           );
           return;
         }
-      } catch (err) {
+      } catch (err: any) {
         console.warn('Microphone permission request error:', err);
+        showToast('Microphone permission request failed');
         return;
       }
     }
@@ -631,13 +768,14 @@ export default function HomeDashboard() {
     if (e && typeof e.stopPropagation === 'function') {
       e.stopPropagation();
     }
+
     if (Platform.OS === 'android') {
       try {
         const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.CAMERA,
           {
             title: 'Camera Permission Required',
-            message: 'Connect App needs camera access for Visual Product Search.',
+            message: 'Connect Mobile app needs camera access for Visual Product Search.',
             buttonPositive: 'Allow',
             buttonNegative: 'Cancel',
           }
@@ -645,27 +783,28 @@ export default function HomeDashboard() {
         if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
           Alert.alert(
             'Camera Permission Required',
-            'Please grant camera permission in Settings to use Visual Search.',
+            'Please grant camera permission in device settings to use Visual Search.',
             [
               { text: 'Cancel', style: 'cancel' },
-              { text: 'Open Settings', onPress: () => Linking.openSettings() }
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
             ]
           );
           return;
         }
-      } catch (err) {
+      } catch (err: any) {
         console.warn('Camera permission request error:', err);
+        Alert.alert('Camera Error', 'Could not request camera permission.');
         return;
       }
     }
 
     Alert.alert(
       'Visual Product Search',
-      'Choose how you would like to search for products visually:',
+      'Take a picture of an item or service to search visually:',
       [
         { text: 'Take Photo (Camera)', onPress: handleTakePhoto },
         { text: 'Choose from Gallery', onPress: handleChooseGallery },
-        { text: 'Cancel', style: 'cancel' }
+        { text: 'Cancel', style: 'cancel' },
       ]
     );
   };
@@ -677,21 +816,35 @@ export default function HomeDashboard() {
         mediaType: 'photo',
         quality: 0.8,
         saveToPhotos: false,
+        cameraType: 'back',
       });
 
       if (result.didCancel) return;
       if (result.errorCode) {
-        Alert.alert('Camera Error', result.errorMessage || 'Failed to launch camera.');
+        if (result.errorCode === 'others' && result.errorMessage?.toLowerCase().includes('permission')) {
+          Alert.alert(
+            'Camera Permission Required',
+            'Camera access is needed to capture photos for visual search.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            ]
+          );
+        } else {
+          Alert.alert('Camera Error', result.errorMessage || 'Failed to launch camera.');
+        }
         return;
       }
+
       if (result.assets && result.assets[0]?.uri) {
         const uri = result.assets[0].uri;
         setCapturedImageUri(uri);
         setIsSearchOpen(true);
         performVisualSearch(uri);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Camera capture error:', err);
+      Alert.alert('Camera Error', err?.message || 'Failed to launch native device camera.');
     }
   };
 
@@ -701,6 +854,7 @@ export default function HomeDashboard() {
       const result = await launchImageLibrary({
         mediaType: 'photo',
         quality: 0.8,
+        selectionLimit: 1,
       });
 
       if (result.didCancel) return;
@@ -708,14 +862,16 @@ export default function HomeDashboard() {
         Alert.alert('Gallery Error', result.errorMessage || 'Failed to pick image from gallery.');
         return;
       }
+
       if (result.assets && result.assets[0]?.uri) {
         const uri = result.assets[0].uri;
         setCapturedImageUri(uri);
         setIsSearchOpen(true);
         performVisualSearch(uri);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Gallery pick error:', err);
+      Alert.alert('Gallery Error', err?.message || 'Failed to open photo gallery.');
     }
   };
 
@@ -737,8 +893,10 @@ export default function HomeDashboard() {
   const formatCardItem = (item: any) => {
     const numPrice = typeof item.price === 'number' ? `₹${item.price.toLocaleString('en-IN')}` : (item.price || '₹499');
     const numMrp = typeof item.mrp === 'number' ? `₹${item.mrp.toLocaleString('en-IN')}` : (item.originalPrice || undefined);
+    const rawImg = item.image || item.img || item.photo || item.imageUrl || (Array.isArray(item.images) && item.images[0]) || '';
+    const itemImg = resolveImageUrl(rawImg) || 'https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=300&auto=format&fit=crop&q=80';
     return {
-      id: item.id || `prod_${item.name}`,
+      id: item._id || item.id || `prod_${item.name}`,
       name: item.name,
       spec: item.brand || item.seller?.name || item.subcategory || item.desc || '',
       price: numPrice,
@@ -746,7 +904,8 @@ export default function HomeDashboard() {
       discount: item.mrp && item.price ? `${Math.round(((item.mrp - item.price) / item.mrp) * 100)}% OFF` : (item.discount || undefined),
       rating: item.rating ? String(item.rating) : '4.6',
       ratingCount: item.ratingCount || '1.2k',
-      image: item.image || item.img || 'https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=300&auto=format&fit=crop&q=80',
+      image: itemImg,
+      img: itemImg,
       category: item.category || 'Product',
       assured: Boolean(item.isAssured || item.assured),
       actionType: item.actionType,
@@ -754,37 +913,42 @@ export default function HomeDashboard() {
   };
 
 
-  const handlePlaceOrder = async (name: string, price: string, category: string) => {
+  const handlePlaceOrder = (name: string, price: string, category: string) => {
     const numPrice = typeof price === 'number'
       ? price
       : (parseInt(String(price || '0').replace(/[^\d]/g, ''), 10) || 500);
     const isBooking = ['Services', 'Service', 'Stay', 'Travel', 'Food', 'Jobs'].includes(category);
-    const userPhone = useAuthStore.getState().currentUser?.phone || '+91 98888 88888';
-    const userAddress = useAuthStore.getState().currentUser?.address?.address || 'Koramangala 5th Block, Bangalore';
-    try {
-      await apiFetch('/orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          vendor_id: 'v1',
-          customer_name: displayName,
-          customer_phone: userPhone,
-          customer_address: userAddress,
-          customer_latitude: 12.9498,
-          customer_longitude: 77.6289,
-          product_details: name,
-          amount: numPrice,
-          order_type: isBooking ? 'booking' : 'order'
-        })
-      });
+    const curUser = useAuthStore.getState().currentUser;
+    const userPhone = curUser?.phone || '+91 98888 88888';
+    const userAddrObj = curUser?.address;
+    const userAddress = userAddrObj
+      ? [userAddrObj.house, userAddrObj.street || userAddrObj.address, userAddrObj.city, userAddrObj.pincode].filter(Boolean).join(', ')
+      : 'Koramangala 5th Block, Bangalore';
 
-      const loadAllOrders = useOrderStore.getState().loadAllOrders;
-      await loadAllOrders();
-      navigation.navigate('CustomerTabs', { screen: 'Orders' });
-    } catch {
-      const loadAllOrders = useOrderStore.getState().loadAllOrders;
-      await loadAllOrders();
-      navigation.navigate('CustomerTabs', { screen: 'Orders' });
-    }
+    // 1. Instant optimistic navigation
+    navigation.navigate('CustomerTabs', { screen: 'Orders' });
+
+    // 2. Non-blocking asynchronous sync
+    apiFetch('/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        vendor_id: 'v1',
+        customer_name: displayName,
+        customer_phone: userPhone,
+        customer_address: userAddress,
+        customer_latitude: 12.9498,
+        customer_longitude: 77.6289,
+        product_details: name,
+        amount: numPrice,
+        order_type: isBooking ? 'booking' : 'order'
+      })
+    })
+      .then(() => {
+        useOrderStore.getState().loadAllOrders?.();
+      })
+      .catch((err) => {
+        console.warn('Background order sync fallback:', err);
+      });
   };
 
 
@@ -793,6 +957,67 @@ export default function HomeDashboard() {
     if (!searchQuery.trim()) return [];
     const query = searchQuery.toLowerCase().trim();
     const results: Array<any> = [];
+
+    // Search dynamic items from MongoDB Atlas
+    if (dbProducts && Array.isArray(dbProducts)) {
+      dbProducts.forEach((prod: any) => {
+        const pName = prod.name || '';
+        const pCat = prod.category || prod.vendorType || '';
+        const pSub = prod.subcategory || prod.subCategory || '';
+        const pDesc = prod.description || '';
+        const pBrand = prod.brand || '';
+        const pFrom = prod.from || prod.origin || '';
+        const pTo = prod.to || prod.destination || '';
+        const pRoute = `${pFrom} to ${pTo} ${pFrom} ➔ ${pTo}`;
+        const pOp = prod.operator || prod.operatorName || prod.businessName || prod.vendorName || '';
+        const pBoarding = Array.isArray(prod.boardingPoints) ? prod.boardingPoints.join(' ') : (prod.boardingPoint || '');
+        const pDropping = Array.isArray(prod.droppingPoints) ? prod.droppingPoints.join(' ') : (prod.dropPoint || '');
+
+        let isMatch =
+          pName.toLowerCase().includes(query) ||
+          pCat.toLowerCase().includes(query) ||
+          pSub.toLowerCase().includes(query) ||
+          pDesc.toLowerCase().includes(query) ||
+          pBrand.toLowerCase().includes(query) ||
+          pFrom.toLowerCase().includes(query) ||
+          pTo.toLowerCase().includes(query) ||
+          pRoute.toLowerCase().includes(query) ||
+          pOp.toLowerCase().includes(query) ||
+          pBoarding.toLowerCase().includes(query) ||
+          pDropping.toLowerCase().includes(query);
+
+        if (!isMatch && (pCat.toLowerCase().includes('travel') || pCat.toLowerCase().includes('bus') || pSub.toLowerCase().includes('bus'))) {
+          const parts = query.replace(/\bto\b|\b➔\b|->|-/gi, ' ').split(/\s+/).filter(Boolean);
+          if (parts.length >= 2) {
+            const partFrom = parts[0];
+            const partTo = parts[parts.length - 1];
+            const mFrom = pFrom.toLowerCase().includes(partFrom) || pBoarding.toLowerCase().includes(partFrom);
+            const mTo = pTo.toLowerCase().includes(partTo) || pDropping.toLowerCase().includes(partTo);
+            if (mFrom && mTo) isMatch = true;
+          }
+        }
+
+        if (isMatch) {
+          const prodId = prod.id || prod._id;
+          if (!results.some((r) => r.id === prodId || r.name.toLowerCase() === pName.toLowerCase())) {
+            results.push({
+              id: prodId,
+              name: pName,
+              categoryKey: pCat || 'Products',
+              subcategoryName: pSub || 'General',
+              price: typeof prod.price === 'number' ? `₹${prod.price.toLocaleString('en-IN')}` : String(prod.price || '₹0'),
+              originalPrice: prod.originalPrice ? (typeof prod.originalPrice === 'number' ? `₹${prod.originalPrice.toLocaleString('en-IN')}` : String(prod.originalPrice)) : undefined,
+              rating: String(prod.rating || '4.5'),
+              image: resolveImageUrl(prod.image || prod.imageUrl) || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=150&q=80',
+              badgeColor: '#D97706',
+              badgeBg: 'rgba(217, 119, 6, 0.12)',
+              type: (pCat || 'product').toLowerCase(),
+              rawProduct: prod,
+            });
+          }
+        }
+      });
+    }
 
     // Catalog of rich items across all 7 categories
     const catalogDatabase = [
@@ -991,7 +1216,7 @@ export default function HomeDashboard() {
         price: '₹64',
         originalPrice: '₹75',
         rating: '4.9',
-        image: 'https://images.unsplash.com/photo-1528750901443-e98fdc48a49a?w=500&auto=format&fit=crop&q=80',
+        image: 'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=500&auto=format&fit=crop&q=80',
         badgeColor: '#10B981',
         badgeBg: 'rgba(16, 185, 129, 0.12)',
         type: 'daily_needs',
@@ -1185,7 +1410,7 @@ export default function HomeDashboard() {
                     price: `₹${199 + (sIdx % 5) * 200}`,
                     originalPrice: `₹${399 + (sIdx % 5) * 250}`,
                     rating: (4.7 + (sIdx % 3) * 0.1).toFixed(1),
-                    image: 'https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=500&auto=format&fit=crop&q=80',
+                    image: getRelevantProductImage(item, subKey, mappedCategoryName),
                     badgeColor: '#0284C7',
                     badgeBg: 'rgba(2, 132, 199, 0.12)',
                     type: mappedCategoryName.toLowerCase(),
@@ -1201,76 +1426,42 @@ export default function HomeDashboard() {
     return results;
   };
 
-  useEffect(() => {
-    if (isSidebarOpen) {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: false,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: false,
-        }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: width,
-          duration: 250,
-          useNativeDriver: false,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 250,
-          useNativeDriver: false,
-        }),
-      ]).start();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSidebarOpen]);
-
-  const handlePlacePendingOrder = async (product: any) => {
-
+  const handlePlacePendingOrder = (product: any) => {
     const rawPrice = product.price;
     const numPrice = typeof rawPrice === 'number'
       ? rawPrice
       : (parseInt(String(rawPrice || '0').replace(/[^\d]/g, ''), 10) || 150);
-    const userPhone = useAuthStore.getState().currentUser?.phone || '+91 98888 88888';
-    const userAddress = useAuthStore.getState().currentUser?.address?.address || 'Koramangala 5th Block, Bangalore';
+    const curUser = useAuthStore.getState().currentUser;
+    const userPhone = curUser?.phone || '+91 98888 88888';
+    const userAddrObj = curUser?.address;
+    const userAddress = userAddrObj
+      ? [userAddrObj.house, userAddrObj.street || userAddrObj.address, userAddrObj.city, userAddrObj.pincode].filter(Boolean).join(', ')
+      : 'Koramangala 5th Block, Bangalore';
     
-    try {
-      const res = await apiFetch('/orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          vendor_id: 'v1',
-          customer_name: displayName,
-          customer_phone: userPhone,
-          customer_address: userAddress,
-          customer_latitude: 12.9498,
-          customer_longitude: 77.6289,
-          product_details: product.name,
-          amount: numPrice
-        })
+    // 1. Instant optimistic state update & navigation
+    setPendingProduct(null);
+    navigation.navigate('CustomerTabs', { screen: 'Orders' });
+
+    // 2. Non-blocking asynchronous sync
+    apiFetch('/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        vendor_id: 'v1',
+        customer_name: displayName,
+        customer_phone: userPhone,
+        customer_address: userAddress,
+        customer_latitude: 12.9498,
+        customer_longitude: 77.6289,
+        product_details: product.name,
+        amount: numPrice
+      })
+    })
+      .then(() => {
+        useOrderStore.getState().loadAllOrders?.();
+      })
+      .catch((err) => {
+        console.warn('Background pending order sync fallback:', err);
       });
-
-      if (res.status !== 'success') {
-        throw new Error(res.message || 'Failed to place order');
-      }
-
-      // Load all orders using the order store
-      const loadAllOrders = useOrderStore.getState().loadAllOrders;
-      await loadAllOrders();
-      setPendingProduct(null);
-      navigation.navigate('CustomerTabs', { screen: 'Orders' });
-    } catch {
-      const loadAllOrders = useOrderStore.getState().loadAllOrders;
-      await loadAllOrders();
-      setPendingProduct(null);
-      navigation.navigate('CustomerTabs', { screen: 'Orders' });
-    }
   };
 
 
@@ -1279,7 +1470,7 @@ export default function HomeDashboard() {
   };
 
   const handleMenuPress = () => {
-    setIsSidebarOpen(true);
+    setIsSidebarOpen(!isSidebarOpen);
   };
 
   const renderCategoryIcon = (iconName: string, color = '#F4C400') => {
@@ -1290,161 +1481,173 @@ export default function HomeDashboard() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Top Mobile Commerce Header with Rich Warm Pastel Yellow/Cream */}
-      <View style={[
-        styles.navbar,
-        {
-          paddingTop: Math.max(insets.top, 24) + 4,
+      <StatusBar
+        barStyle={colors.statusBarStyle}
+        backgroundColor={isLightActive ? '#FFF3D6' : colors.background}
+        translucent={false}
+      />
+      {/* Top Mobile Commerce Header with SafeAreaView - Always fully visible above side drawer */}
+      <SafeAreaView
+        edges={['top']}
+        onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
+        style={{
           backgroundColor: isLightActive ? '#FFF3D6' : colors.background,
           borderBottomWidth: 1,
           borderBottomColor: isLightActive ? 'rgba(242, 183, 5, 0.3)' : colors.cardBorder,
-        }
-      ]}>
-
-        {/* Row 1: ☰ [Forge Logo] [Deliver to Bengaluru] ♡ 🛒 👤 */}
-        <View style={styles.topHeaderRow}>
-          {/* 1. Hamburger Menu */}
-          <TouchableOpacity
-            style={styles.navIconBtn}
-            activeOpacity={0.7}
-            onPress={handleMenuPress}
-            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-          >
-            <Icons.Menu color={colors.text} size={22} />
-          </TouchableOpacity>
-
-          {/* 2. Official Forge India Connect Logo Asset */}
-          <Image
-            source={require('../../assets/images/forge_india_logo.jpg')}
-            style={[
-              styles.headerConnectLogo,
-              { borderColor: isLightActive ? '#FDE68A' : colors.cardBorder }
-            ]}
-            resizeMode="cover"
-          />
-
-          {/* 3. Delivery Location Selector Pill */}
-          <TouchableOpacity
-            style={[
-              styles.locationPill,
-              {
-                backgroundColor: isLightActive ? '#FFFFFF' : 'rgba(255, 255, 255, 0.06)',
-                borderColor: isLightActive ? '#FDE68A' : colors.cardBorder,
-              }
-            ]}
-            activeOpacity={0.8}
-            onPress={() => {
-              navigation.navigate('LocationSelection');
-            }}
-
-          >
-            <Icons.MapPin color="#F5B800" size={13} />
-            <View style={styles.locationTextCol}>
-              <Text style={[styles.locationLabelText, { color: isLightActive ? '#64748B' : 'rgba(255, 255, 255, 0.5)' }]}>DELIVER TO</Text>
-              <Text style={[styles.locationValueText, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">
-                {getDisplayLocation()}
-              </Text>
-            </View>
-            <Icons.ChevronDown color={isLightActive ? '#64748B' : 'rgba(255, 255, 255, 0.5)'} size={13} />
-          </TouchableOpacity>
-
-          {/* Right Action Icons: Wishlist -> Cart -> Profile */}
-          <View style={styles.navRightGroup}>
+          zIndex: 1000,
+          elevation: 12,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.08,
+          shadowRadius: 4,
+        }}
+      >
+        <View style={styles.navbar}>
+          {/* Row 1: Toolbar - Logo + Welcome Text on Left, Wishlist/Cart/Notif/Hamburger on Right */}
+          <View style={styles.topHeaderRow}>
+            {/* 1. Official Logo & Compact Welcome Text */}
             <TouchableOpacity
-              style={styles.navIconBtn}
-              activeOpacity={0.7}
-              onPress={() => setIsWishlistVisible(true)}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              style={styles.headerWelcomeGroup}
+              activeOpacity={0.8}
+              onPress={() => {
+                if (!currentUser || currentUser.isGuest) {
+                  navigation.navigate('Login');
+                } else {
+                  navigation.navigate('CustomerTabs', { screen: 'Profile' });
+                }
+              }}
             >
-              <Icons.Heart 
-                color={wishlistItems.length > 0 ? "#FF2E93" : colors.text} 
-                size={20} 
-                fill={wishlistItems.length > 0 ? "#FF2E93" : "transparent"} 
+              <Image
+                source={require('../../assets/images/forge_india_logo.jpg')}
+                style={[
+                  styles.headerConnectLogo,
+                  { borderColor: isLightActive ? '#FDE68A' : colors.cardBorder }
+                ]}
+                resizeMode="cover"
               />
-              {wishlistItems.length > 0 && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{wishlistItems.length}</Text>
-                </View>
-              )}
+              <View style={styles.headerWelcomeTextCol}>
+                <Text style={[styles.headerWelcomeSubtext, { color: isLightActive ? '#64748B' : 'rgba(255, 255, 255, 0.6)' }]} numberOfLines={1}>
+                  {t('Welcome back,')}
+                </Text>
+                <Text style={[styles.headerWelcomeNameText, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">
+                  {currentUser?.name || t('Guest')}
+                </Text>
+              </View>
             </TouchableOpacity>
 
+            {/* 2. Right Action Icons: Wishlist -> Cart -> Notifications -> Hamburger */}
+            <View style={styles.navRightGroup}>
+              <TouchableOpacity
+                style={styles.navIconBtn}
+                activeOpacity={0.7}
+                onPress={() => setIsWishlistVisible(true)}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              >
+                <Icons.Heart 
+                  color={wishlistItems.length > 0 ? "#FF2E93" : colors.text} 
+                  size={20} 
+                  fill={wishlistItems.length > 0 ? "#FF2E93" : "transparent"} 
+                />
+                {wishlistItems.length > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{wishlistItems.length}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.navIconBtn}
+                activeOpacity={0.7}
+                onPress={() => navigation.navigate('Cart')}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              >
+                <Icons.ShoppingCart color={colors.text} size={20} />
+                {totalCartCount > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{totalCartCount}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.navIconBtn}
+                activeOpacity={0.7}
+                onPress={() => setIsNotifDropdownOpen((prev) => !prev)}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              >
+                <Icons.Bell color={colors.text} size={20} />
+                {unreadNotifCount > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{unreadNotifCount}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.hamburgerBtn}
+                activeOpacity={0.7}
+                onPress={handleMenuPress}
+                hitSlop={{ top: 12, bottom: 12, left: 6, right: 6 }}
+              >
+                <Icons.Menu color={colors.text} size={22} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Row 2: Full-Width Search Bar with warm yellow border */}
+          <View style={[
+            styles.commerceSearchBar,
+            {
+              backgroundColor: isLightActive ? '#FFFFFF' : 'rgba(255, 255, 255, 0.07)',
+              borderColor: isLightActive ? '#FDE68A' : colors.cardBorder,
+            }
+          ]}>
             <TouchableOpacity
-              style={styles.navIconBtn}
-              activeOpacity={0.7}
-              onPress={() => setIsCartVisible(true)}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              style={styles.searchBarLeftTouch}
+              activeOpacity={0.85}
+              onPress={handleSearchPress}
             >
-              <Icons.ShoppingCart color={colors.text} size={20} />
-              {totalCartCount > 0 && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{totalCartCount}</Text>
-                </View>
-              )}
+              <Icons.Search color="#F5B800" size={17} />
+              <Text style={[styles.searchPlaceholderText, { color: isLightActive ? '#64748B' : 'rgba(255, 255, 255, 0.6)' }]} numberOfLines={1}>
+                {t('search_placeholder')}
+              </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.navIconBtn}
-              activeOpacity={0.7}
-              onPress={() => setIsNotifDropdownOpen((prev) => !prev)}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-            >
-              <Icons.Bell color={colors.text} size={20} />
-              {unreadNotifCount > 0 && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{unreadNotifCount}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
+            <View style={styles.searchRightIcons}>
+              <TouchableOpacity
+                onPress={handleMicPress}
+                style={styles.searchActionIconBtn}
+                activeOpacity={0.7}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Icons.Mic color={isListening ? "#F59E0B" : colors.text} size={19} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleCameraPress}
+                style={styles.searchActionIconBtn}
+                activeOpacity={0.7}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Icons.Camera color={colors.text} size={19} />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
+      </SafeAreaView>
 
-        {/* Row 2: Full-Width Search Bar with warm yellow border */}
-        <View style={[
-          styles.commerceSearchBar,
-          {
-            backgroundColor: isLightActive ? '#FFFFFF' : 'rgba(255, 255, 255, 0.07)',
-            borderColor: isLightActive ? '#FDE68A' : colors.cardBorder,
-          }
-        ]}>
+      {/* Notification Modal with Strong Blur & Dim Backdrop */}
+      <Modal
+        visible={isNotifDropdownOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsNotifDropdownOpen(false)}
+        statusBarTranslucent={true}
+      >
+        <View style={styles.notifFullModalContainer}>
+          {/* Strong blurred + semi-transparent dim overlay capturing touch outside */}
           <TouchableOpacity
-            style={styles.searchBarLeftTouch}
-            activeOpacity={0.85}
-            onPress={handleSearchPress}
-          >
-            <Icons.Search color="#F5B800" size={18} />
-            <Text style={[styles.searchPlaceholderText, { color: isLightActive ? '#64748B' : 'rgba(255, 255, 255, 0.6)' }]} numberOfLines={1}>
-              Search products, food, services & more
-            </Text>
-          </TouchableOpacity>
-
-          <View style={styles.searchRightIcons}>
-            <TouchableOpacity
-              onPress={handleMicPress}
-              style={styles.searchActionIconBtn}
-              activeOpacity={0.7}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Icons.Mic color={colors.text} size={22} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={handleCameraPress}
-              style={styles.searchActionIconBtn}
-              activeOpacity={0.7}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Icons.Camera color={colors.text} size={22} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
-      {/* Notification Dropdown Panel Overlay */}
-      {isNotifDropdownOpen && (
-        <View style={styles.notifOverlayContainer} pointerEvents="box-none">
-          {/* Backdrop to capture tap outside */}
-          <TouchableOpacity
-            style={styles.notifBackdrop}
+            style={styles.notifFullModalBackdrop}
             activeOpacity={1}
             onPress={() => setIsNotifDropdownOpen(false)}
           />
@@ -1456,7 +1659,7 @@ export default function HomeDashboard() {
               {
                 backgroundColor: isLightActive ? '#FFFFFF' : '#0B132B',
                 borderColor: isLightActive ? '#FDE68A' : 'rgba(245, 184, 0, 0.3)',
-                top: Math.max(insets.top, 20) + 54,
+                top: insets.top + 48,
               },
             ]}
           >
@@ -1491,7 +1694,7 @@ export default function HomeDashboard() {
             <ScrollView style={{ maxHeight: 260 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
               {notifications.length > 0 ? (
                 notifications.slice(0, 5).map((item) => {
-                  const IconComp = (Icons as any)[item.icon] || Icons.Bell;
+                  const IconComp = (item.icon && typeof (Icons as any)[item.icon] === 'function') ? (Icons as any)[item.icon] : Icons.Bell;
                   return (
                     <TouchableOpacity
                       key={item.id}
@@ -1573,25 +1776,13 @@ export default function HomeDashboard() {
             </TouchableOpacity>
           </View>
         </View>
-      )}
+      </Modal>
 
       <ScrollView 
         contentContainerStyle={styles.scrollContent} 
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         removeClippedSubviews={true}
-        onScroll={() => {
-          if (isNotifDropdownOpen) setIsNotifDropdownOpen(false);
-        }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={['#F4C400', '#3B82F6']}
-            tintColor="#F4C400"
-            progressBackgroundColor={colors.background === '#F8FAFC' ? '#FFFFFF' : '#0D1636'}
-          />
-        }
       >
 
 
@@ -1605,7 +1796,12 @@ export default function HomeDashboard() {
             snapToInterval={width}
             decelerationRate="fast"
             contentContainerStyle={styles.bannerScrollContent}
+            onTouchStart={() => setIsBannerPaused(true)}
+            onTouchEnd={() => setIsBannerPaused(false)}
+            onScrollBeginDrag={() => setIsBannerPaused(true)}
+            onScrollEndDrag={() => setIsBannerPaused(false)}
             onMomentumScrollEnd={(e) => {
+              setIsBannerPaused(false);
               const offsetX = e.nativeEvent.contentOffset.x;
               const idx = Math.round(offsetX / width);
               if (idx !== activeBannerIndex && idx >= 0 && idx < banners.length) {
@@ -1615,7 +1811,7 @@ export default function HomeDashboard() {
             scrollEventThrottle={16}
           >
             {(banners || []).map((banner) => {
-              const IconComp = (Icons as any)[banner.iconName] || Icons.Tag;
+              const IconComp = (banner.iconName && typeof (Icons as any)[banner.iconName] === 'function') ? (Icons as any)[banner.iconName] : Icons.Tag;
               const theme = getBannerTheme(banner.bgColor);
 
               return (
@@ -1630,6 +1826,8 @@ export default function HomeDashboard() {
                         borderColor: theme.isLight ? '#F1EAD8' : 'rgba(255, 255, 255, 0.1)',
                       },
                     ]}
+                    onPressIn={() => setIsBannerPaused(true)}
+                    onPressOut={() => setIsBannerPaused(false)}
                     onPress={() => navigation.navigate('CategoryDetails', { categoryName: banner.targetCategory || 'Products' })}
                   >
                     {/* Left Side Info (55%) */}
@@ -1673,6 +1871,8 @@ export default function HomeDashboard() {
                       <TouchableOpacity
                         style={[styles.bannerBtn, { backgroundColor: theme.btnBg }]}
                         activeOpacity={0.8}
+                        onPressIn={() => setIsBannerPaused(true)}
+                        onPressOut={() => setIsBannerPaused(false)}
                         onPress={() => navigation.navigate('CategoryDetails', { categoryName: banner.targetCategory || 'Products' })}
                       >
                         <Text style={[styles.bannerBtnText, { color: theme.btnTextColor }]}>
@@ -1770,10 +1970,10 @@ export default function HomeDashboard() {
           <View style={styles.sectionHeaderRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Icons.Compass color="#F5B800" size={16} />
-              <Text style={[styles.sectionHeader, { color: colors.text }]}>What's happening near you</Text>
+              <Text style={[styles.sectionHeader, { color: colors.text }]}>{t("What's happening near you")}</Text>
             </View>
             <TouchableOpacity onPress={() => navigation.navigate('CustomerTabs', { screen: 'Categories' })}>
-              <Text style={[styles.viewAllText, { color: colors.primary }]}>View All →</Text>
+              <Text style={[styles.viewAllText, { color: colors.primary }]}>{t('view_all')}</Text>
             </TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalScroll}>
@@ -1788,25 +1988,27 @@ export default function HomeDashboard() {
                   },
                 ]}
                 activeOpacity={0.88}
-                onPress={() => navigation.navigate('CategoryDetails', { categoryName: card.targetCategory })}
+                onPress={() => {
+                  navigation.navigate('CategoryDetails', { categoryName: card.targetCategory });
+                }}
               >
                 <Image source={{ uri: card.image }} style={styles.happeningImg} resizeMode="cover" />
                 <View style={styles.happeningBody}>
                   <View style={styles.happeningTagRow}>
-                    <Text style={styles.happeningTagText}>{card.tag}</Text>
+                    <Text style={styles.happeningTagText}>{t(card.tag)}</Text>
                     <Text style={[styles.happeningRatingText, { color: isLightActive ? '#64748B' : 'rgba(255, 255, 255, 0.6)' }]}>
                       {card.rating}
                     </Text>
                   </View>
                   <Text style={[styles.happeningTitle, { color: colors.text }]} numberOfLines={1}>
-                    {card.title}
+                    {t(card.title)}
                   </Text>
                   <View style={styles.happeningFooter}>
                     <Text style={[styles.happeningOffer, { color: isLightActive ? '#0F172A' : '#F5B800' }]}>
-                      {card.offerText}
+                      {t(card.offerText)}
                     </Text>
                     <View style={styles.happeningCtaBtn}>
-                      <Text style={styles.happeningCtaText}>{card.ctaText}</Text>
+                      <Text style={styles.happeningCtaText}>{t(card.ctaText)}</Text>
                       <Icons.ChevronRight color="#0F172A" size={11} />
                     </View>
                   </View>
@@ -1816,53 +2018,21 @@ export default function HomeDashboard() {
           </ScrollView>
         </View>
 
-        {/* 3. Promotional Strip: Connect Membership */}
-        <TouchableOpacity
-          style={[
-            styles.promoStripCard,
-            {
-              backgroundColor: isLightActive ? '#FFF1C7' : 'rgba(244, 196, 0, 0.1)',
-              borderColor: isLightActive ? '#FDE68A' : 'rgba(244, 196, 0, 0.3)',
-            },
-          ]}
-          activeOpacity={0.9}
-          onPress={() => navigation.navigate('CustomerTabs', { screen: 'Membership' })}
-        >
-          <View style={styles.promoStripLeft}>
-            <View style={styles.promoCrownCircle}>
-              <Icons.Crown color="#F5B800" size={18} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={[styles.promoStripTitle, { color: '#0F172A' }]}>Connect Membership</Text>
-                <View style={styles.goldBadgeSmall}>
-                  <Text style={styles.goldBadgeSmallText}>GOLD</Text>
-                </View>
-              </View>
-              <Text style={styles.promoStripSub}>Zero delivery fee & member prices on 500+ items</Text>
-            </View>
-          </View>
-          <View style={styles.promoStripCta}>
-            <Text style={styles.promoStripCtaText}>Join @ ₹499</Text>
-            <Icons.ArrowRight color="#0F172A" size={12} />
-          </View>
-        </TouchableOpacity>
-
         {/* 4. "Picked for you ✨" (2-Column Personalized Grid) */}
         <View style={[styles.sectionContainer, { marginTop: 22 }]}>
           <View style={styles.sectionHeaderRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Icons.Sparkles color="#F5B800" size={16} />
-              <Text style={[styles.sectionHeader, { color: colors.text }]}>Picked for you</Text>
+              <Text style={[styles.sectionHeader, { color: colors.text }]}>{t('picked_for_you')}</Text>
             </View>
             <TouchableOpacity onPress={() => navigation.navigate('CustomerTabs', { screen: 'Categories' })}>
-              <Text style={[styles.viewAllText, { color: colors.primary }]}>View All →</Text>
+              <Text style={[styles.viewAllText, { color: colors.primary }]}>{t('view_all')}</Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.feedGrid}>
             {(dbProducts.length > 0 ? dbProducts : CURATED_HOME_PRODUCTS)
-              .slice(0, 6)
+              .slice(0, 20)
               .map(formatCardItem)
               .map((item) => (
                 <ProductCard
@@ -1880,10 +2050,10 @@ export default function HomeDashboard() {
           <View style={styles.sectionHeaderRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Icons.MapPin color="#F5B800" size={16} />
-              <Text style={[styles.sectionHeader, { color: colors.text }]}>Popular Near You</Text>
+              <Text style={[styles.sectionHeader, { color: colors.text }]}>{t('popular_near_you')}</Text>
             </View>
             <TouchableOpacity onPress={() => setIsPartnersModalVisible(true)}>
-              <Text style={[styles.viewAllText, { color: colors.primary }]}>View All →</Text>
+              <Text style={[styles.viewAllText, { color: colors.primary }]}>{t('view_all')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -1891,18 +2061,29 @@ export default function HomeDashboard() {
             {(dbVendors.length > 0 ? dbVendors : DEFAULT_VENDORS)
               .slice(0, 6)
               .map((vendor, idx) => (
-                <GlassCard key={idx} style={styles.vendorCard}>
+                <GlassCard
+                  key={idx}
+                  style={styles.vendorCard}
+                  backgroundColor={isDark ? '#0D1636' : '#FFFFFF'}
+                  borderColor={isDark ? 'rgba(255, 255, 255, 0.12)' : '#F1EAD8'}
+                >
                   <Image source={{ uri: vendor.image }} style={styles.vendorImg} />
-                  <View style={styles.vendorInfo}>
-                    <Text style={[styles.vendorName, { color: colors.text }]} numberOfLines={1}>{vendor.name}</Text>
+                  <View style={[styles.vendorInfo, { backgroundColor: isDark ? '#0D1636' : '#FFFFFF' }]}>
+                    <Text style={[styles.vendorName, { color: isDark ? '#FFFFFF' : '#0F172A' }]} numberOfLines={1}>
+                      {vendor.name}
+                    </Text>
                     <View style={styles.vendorMeta}>
                       <View style={styles.metaCol}>
-                        <Icons.Star color="#F5B800" size={10} fill="#F5B800" />
-                        <Text style={[styles.metaVal, { color: colors.text, opacity: 0.7 }]}> {vendor.rating || '4.8'}</Text>
+                        <Icons.Star color="#F5B800" size={11} fill="#F5B800" />
+                        <Text style={[styles.metaVal, { color: isDark ? '#FFFFFF' : '#0F172A' }]}>
+                          {vendor.rating || '4.8'}
+                        </Text>
                       </View>
                       <View style={styles.metaCol}>
-                        <Icons.MapPin color="#64748B" size={10} />
-                        <Text style={[styles.metaVal, { color: colors.text, opacity: 0.7 }]}> {vendor.distance || '1.2 km'}</Text>
+                        <Icons.MapPin color="#F5B800" size={11} />
+                        <Text style={[styles.metaVal, { color: isDark ? '#CBD5E1' : '#64748B' }]}>
+                          {vendor.distance || '1.2 km'}
+                        </Text>
                       </View>
                     </View>
                   </View>
@@ -1916,10 +2097,10 @@ export default function HomeDashboard() {
           <View style={styles.sectionHeaderRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Icons.Clock color="#F5B800" size={16} />
-              <Text style={[styles.sectionHeader, { color: colors.text }]}>Continue Browsing</Text>
+              <Text style={[styles.sectionHeader, { color: colors.text }]}>{t('continue_browsing')}</Text>
             </View>
-            <TouchableOpacity onPress={() => navigation.navigate('RecentlyViewed')}>
-              <Text style={[styles.viewAllText, { color: colors.primary }]}>Explore All →</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('CustomerTabs', { screen: 'Categories', params: { category: 'All' } })}>
+              <Text style={[styles.viewAllText, { color: colors.primary }]}>{t('explore_all')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -1965,45 +2146,211 @@ export default function HomeDashboard() {
         onClose={() => setIsVendorBannerModalOpen(false)}
       />
 
-      {/* Recommended Partners view all modal */}
+      {/* Recommended Partners view all bottom sheet */}
       <Modal
         visible={isPartnersModalVisible}
         animationType="slide"
         transparent={true}
         onRequestClose={() => setIsPartnersModalVisible(false)}
       >
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalCard, { height: '75%', backgroundColor: colors.background, borderColor: colors.cardBorder, padding: 0 }]}>
-            <View style={[styles.modalHeader, { borderColor: colors.cardBorder }]}>
-              <Text style={[styles.modalHeaderTitle, { color: colors.text }]}>Recommended Partner Hubs</Text>
-              <TouchableOpacity onPress={() => setIsPartnersModalVisible(false)} style={styles.modalCloseBtn}>
-                <Icons.X color={colors.text} size={20} />
+        <TouchableOpacity
+          style={styles.partnerBottomSheetBackdrop}
+          activeOpacity={1}
+          onPress={() => setIsPartnersModalVisible(false)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[
+              styles.partnerBottomSheetContainer,
+              {
+                backgroundColor: isLightActive ? '#FFF8E8' : '#0B132B',
+                borderColor: isLightActive ? '#F1EAD8' : 'rgba(255, 255, 255, 0.1)',
+              },
+            ]}
+          >
+            {/* Drag Handle */}
+            <View style={styles.sheetDragHandle} />
+
+            {/* Header */}
+            <View style={styles.partnerSheetHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.partnerSheetTitle, { color: colors.text }]}>Recommended Partner Hubs</Text>
+                <Text style={[styles.partnerSheetSubtitle, { color: isLightActive ? '#64748B' : '#94A3B8' }]}>
+                  Verified nearby partners delivering to your location
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsPartnersModalVisible(false)}
+                style={[
+                  styles.partnerSheetCloseBtn,
+                  { backgroundColor: isLightActive ? '#F1F5F9' : 'rgba(255,255,255,0.08)' },
+                ]}
+              >
+                <Icons.X color={colors.text} size={18} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ flex: 1, padding: 20 }} showsVerticalScrollIndicator={false}>
-              {dbVendors.map((partner, idx) => (
-                <GlassCard key={idx} style={styles.partnerListCard}>
-                  <Image source={{ uri: partner.image }} style={styles.partnerListImg} />
-                  <View style={styles.partnerListDetails}>
-                    <Text style={[styles.partnerListName, { color: colors.text }]}>{partner.name}</Text>
-                    <Text style={[styles.partnerListDesc, { color: colors.text, opacity: 0.5 }]} numberOfLines={2}>{partner.desc || partner.category}</Text>
-                    <View style={styles.partnerListMeta}>
-                      <View style={styles.metaCol}>
-                        <Icons.Star color="#F4C400" size={10} fill="#F4C400" />
-                        <Text style={[styles.metaVal, { color: colors.text, opacity: 0.6 }]}> {partner.rating || '4.8'}</Text>
+            {/* Category Filter Chips */}
+            <View style={styles.partnerChipsWrapper}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.partnerChipsRow}>
+                {['All', 'Services', 'Daily Needs', 'Food', 'Stay', 'Products'].map((cat) => {
+                  const isSelected = (partnerCatFilter || 'All') === cat;
+                  return (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[
+                        styles.partnerCatChip,
+                        {
+                          backgroundColor: isSelected
+                            ? '#F5B800'
+                            : isLightActive
+                            ? '#FFFFFF'
+                            : 'rgba(255, 255, 255, 0.05)',
+                          borderColor: isSelected
+                            ? '#F5B800'
+                            : isLightActive
+                            ? '#E2E8F0'
+                            : 'rgba(255, 255, 255, 0.1)',
+                        },
+                      ]}
+                      onPress={() => setPartnerCatFilter(cat)}
+                    >
+                      <Text
+                        style={[
+                          styles.partnerCatChipText,
+                          {
+                            color: isSelected
+                              ? '#0F172A'
+                              : isLightActive
+                              ? '#475569'
+                              : '#CBD5E1',
+                            fontWeight: isSelected ? '800' : '600',
+                          },
+                        ]}
+                      >
+                        {cat}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* Partner Cards List */}
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, gap: 10 }}
+              showsVerticalScrollIndicator={false}
+              removeClippedSubviews={true}
+              scrollEventThrottle={16}
+            >
+              {(dbVendors || [])
+                .filter((p) => {
+                  if (!partnerCatFilter || partnerCatFilter === 'All') return true;
+                  return (p.category || '').toLowerCase() === partnerCatFilter.toLowerCase();
+                })
+                .sort((a, b) => {
+                  const distA = parseFloat(String(a.distance || '99').replace(/[^\d.]/g, '')) || 99;
+                  const distB = parseFloat(String(b.distance || '99').replace(/[^\d.]/g, '')) || 99;
+                  return distA - distB;
+                })
+                .map((partner, idx) => {
+                  const cat = partner.category || 'Services';
+                  const ctaLabel =
+                    cat === 'Services'
+                      ? 'Book'
+                      : cat === 'Food'
+                      ? 'Order'
+                      : cat === 'Stay'
+                      ? 'Reserve'
+                      : 'Explore';
+
+                  return (
+                    <TouchableOpacity
+                      key={partner.id || idx}
+                      style={[
+                        styles.partnerCompactCard,
+                        {
+                          backgroundColor: isLightActive ? '#FFFFFF' : 'rgba(255, 255, 255, 0.04)',
+                          borderColor: isLightActive ? '#F1EAD8' : 'rgba(255, 255, 255, 0.08)',
+                        },
+                      ]}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        setIsPartnersModalVisible(false);
+                        navigation.navigate('CategoryDetails', { categoryName: cat, vendor: partner });
+                      }}
+                    >
+                      <Image source={{ uri: partner.image }} style={styles.partnerCompactImg} />
+                      <View style={styles.partnerCompactInfo}>
+                        <View style={styles.partnerTopMetaRow}>
+                          <View
+                            style={[
+                              styles.partnerCategoryTag,
+                              {
+                                backgroundColor:
+                                  cat === 'Services'
+                                    ? 'rgba(59, 130, 246, 0.12)'
+                                    : cat === 'Daily Needs'
+                                    ? 'rgba(16, 185, 129, 0.12)'
+                                    : cat === 'Food'
+                                    ? 'rgba(245, 158, 11, 0.12)'
+                                    : 'rgba(139, 92, 246, 0.12)',
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.partnerCategoryTagText,
+                                {
+                                  color:
+                                    cat === 'Services'
+                                      ? '#2563EB'
+                                      : cat === 'Daily Needs'
+                                      ? '#059669'
+                                      : cat === 'Food'
+                                      ? '#D97706'
+                                      : '#7C3AED',
+                                },
+                              ]}
+                            >
+                              {cat.toUpperCase()}
+                            </Text>
+                          </View>
+                          <View style={styles.partnerDistanceRow}>
+                            <Icons.MapPin color="#F5B800" size={11} />
+                            <Text style={styles.partnerDistanceText}>{partner.distance || '1.2 km'}</Text>
+                          </View>
+                        </View>
+
+                        <Text style={[styles.partnerCompactName, { color: colors.text }]} numberOfLines={1}>
+                          {partner.name}
+                        </Text>
+                        <Text
+                          style={[styles.partnerCompactDesc, { color: isLightActive ? '#64748B' : '#94A3B8' }]}
+                          numberOfLines={1}
+                        >
+                          {partner.desc || `${cat} specialist hub`}
+                        </Text>
+
+                        <View style={styles.partnerBottomRow}>
+                          <View style={styles.partnerRatingTag}>
+                            <Icons.Star color="#F5B800" size={11} fill="#F5B800" />
+                            <Text style={styles.partnerRatingText}>{partner.rating || '4.8'}</Text>
+                          </View>
+
+                          <View style={styles.partnerCtaPill}>
+                            <Text style={styles.partnerCtaText}>{ctaLabel}</Text>
+                            <Icons.ChevronRight color="#0F172A" size={12} />
+                          </View>
+                        </View>
                       </View>
-                      <View style={styles.metaCol}>
-                        <Icons.MapPin color={colors.text} size={10} style={{ opacity: 0.5 }} />
-                        <Text style={[styles.metaVal, { color: colors.text, opacity: 0.6 }]}> {partner.distance || '1.2 km'}</Text>
-                      </View>
-                    </View>
-                  </View>
-                </GlassCard>
-              ))}
+                    </TouchableOpacity>
+                  );
+                })}
             </ScrollView>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
 
@@ -2114,7 +2461,7 @@ export default function HomeDashboard() {
                         if (isAlreadyInCart) {
                           showToast('Already in your cart', 'View Cart', () => {
                             setPendingProduct(null);
-                            navigation.navigate('CustomerTabs', { screen: 'Cart' });
+                            navigation.navigate('Cart');
                           });
                         } else {
                           addToCart({
@@ -2126,7 +2473,7 @@ export default function HomeDashboard() {
                           });
                           showToast('Added to cart · View Cart', 'View Cart', () => {
                             setPendingProduct(null);
-                            navigation.navigate('CustomerTabs', { screen: 'Cart' });
+                            navigation.navigate('Cart');
                           });
                         }
                         setPendingProduct(null);
@@ -2158,7 +2505,13 @@ export default function HomeDashboard() {
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, { height: '75%', backgroundColor: colors.background, borderColor: colors.cardBorder, padding: 0 }]}>
             <View style={[styles.modalHeader, { borderColor: colors.cardBorder }]}>
-              <Text style={[styles.modalHeaderTitle, { color: colors.text }]}>Exclusive Gold Membership Offers</Text>
+              <Text style={[styles.modalHeaderTitle, { color: colors.text }]}>
+                {currentUser?.membership === 'diamond'
+                  ? 'Exclusive Diamond Club Offers'
+                  : currentUser?.membership === 'gold'
+                  ? 'Exclusive Gold Member Offers'
+                  : 'Exclusive Member Offers'}
+              </Text>
               <TouchableOpacity onPress={() => setIsOffersModalVisible(false)} style={styles.modalCloseBtn}>
                 <Icons.X color={colors.text} size={20} />
               </TouchableOpacity>
@@ -2191,41 +2544,44 @@ export default function HomeDashboard() {
         </View>
       </Modal>
 
-      {/* Sidebar Drawer Overlay */}
-      <Modal
-        transparent={true}
-        visible={isSidebarOpen}
-        animationType="none"
-        onRequestClose={() => setIsSidebarOpen(false)}
+      {/* Sidebar Drawer Overlay (Always sits underneath the fully-visible Top Header) */}
+      <Animated.View 
+        pointerEvents={isSidebarOpen ? 'auto' : 'none'}
+        style={[
+          StyleSheet.absoluteFill, 
+          { 
+            top: headerHeight || insets.top + 94, 
+            zIndex: 900, 
+            elevation: 8,
+            opacity: fadeAnim,
+          }
+        ]}
       >
-        <View style={{ flex: 1, position: 'relative' }}>
-          {/* Backdrop */}
-          <Animated.View 
-            style={[
-              styles.backdrop, 
-              { opacity: fadeAnim }
-            ]}
-          >
-            <TouchableOpacity 
-              style={StyleSheet.absoluteFill} 
-              activeOpacity={1} 
-              onPress={() => setIsSidebarOpen(false)}
-            />
-          </Animated.View>
+        {/* Backdrop */}
+        <TouchableOpacity 
+          style={styles.backdrop} 
+          activeOpacity={1} 
+          onPress={() => {
+            setIsSidebarOpen(false);
+            setIsSidebarLanguageView(false);
+            setIsSidebarLocationView(false);
+          }}
+        />
 
-          {/* Slide-out Sidebar Panel */}
-          <Animated.View 
-            style={[
-              styles.sidebar, 
-              { 
-                width: width * 0.82,
-                paddingTop: insets.top,
-                backgroundColor: colors.background,
-                borderLeftColor: colors.cardBorder,
-                transform: [{ translateX: slideAnim }] 
-              }
-            ]}
-          >
+        {/* Slide-out Sidebar Panel */}
+        <Animated.View 
+          style={[
+            styles.sidebar, 
+            { 
+              width: width * 0.84,
+              top: 0,
+              bottom: 0,
+              backgroundColor: colors.background,
+              borderRightColor: colors.cardBorder,
+              transform: [{ translateX: slideAnim }] 
+            }
+          ]}
+        >
             {isSidebarLanguageView ? (
               /* --- SIDEBAR: LANGUAGE SELECTION VIEW --- */
               <View style={{ flex: 1 }}>
@@ -2237,7 +2593,7 @@ export default function HomeDashboard() {
                     activeOpacity={0.7}
                   >
                     <Icons.ArrowLeft color={colors.text} size={20} />
-                    <Text style={[styles.sidebarHeaderTitle, { color: colors.text }]}>Select Language</Text>
+                    <Text style={[styles.sidebarHeaderTitle, { color: colors.text }]}>{t('select_language')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity 
                     style={styles.sidebarCloseBtn} 
@@ -2254,7 +2610,7 @@ export default function HomeDashboard() {
                 {/* Subtitle */}
                 <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 }}>
                   <Text style={{ fontSize: 12, color: colors.grayLight, lineHeight: 17 }}>
-                    Choose your preferred language. All interface content remains in English.
+                    {t('choose_language_desc')}
                   </Text>
                 </View>
 
@@ -2300,7 +2656,7 @@ export default function HomeDashboard() {
                             <Icons.Globe color={isSelected ? colors.primary : colors.grayLight} size={16} />
                           </View>
                           <Text style={{ fontSize: 14, fontWeight: isSelected ? 'bold' : '600', color: colors.text }}>
-                            {lang.name}
+                            {lang.name} {lang.nativeName !== lang.name ? `(${lang.nativeName})` : ''}
                           </Text>
                         </View>
 
@@ -2384,6 +2740,8 @@ export default function HomeDashboard() {
                 <ScrollView
                   style={styles.sidebarScroll}
                   showsVerticalScrollIndicator={false}
+                  removeClippedSubviews={true}
+                  scrollEventThrottle={16}
                   contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 6, gap: 8, paddingBottom: insets.bottom + 20 }}
                 >
                   {/* 1. "Use Current Location" Option */}
@@ -2598,7 +2956,7 @@ export default function HomeDashboard() {
                       source={require('../../assets/images/forge_india_logo.jpg')}
                       style={styles.sidebarLogo}
                     />
-                    <Text style={[styles.sidebarHeaderTitle, { color: colors.text }]}>CONNECT APP</Text>
+                    <Text style={[styles.sidebarHeaderTitle, { color: colors.text }]}>{t('connect_app')}</Text>
                   </View>
                   <TouchableOpacity 
                     style={styles.sidebarCloseBtn} 
@@ -2626,7 +2984,7 @@ export default function HomeDashboard() {
                   >
                     <View style={styles.sidebarMenuCardLeft}>
                       <Icons.Package color={colors.primary} size={18} />
-                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>My Orders</Text>
+                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>{t('my_orders')}</Text>
                     </View>
                     <Icons.ChevronRight color={colors.grayLight} size={16} />
                   </TouchableOpacity>
@@ -2642,7 +3000,7 @@ export default function HomeDashboard() {
                   >
                     <View style={styles.sidebarMenuCardLeft}>
                       <Icons.Calendar color={colors.primary} size={18} />
-                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>My Bookings</Text>
+                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>{t('my_bookings')}</Text>
                     </View>
                     <Icons.ChevronRight color={colors.grayLight} size={16} />
                   </TouchableOpacity>
@@ -2658,7 +3016,7 @@ export default function HomeDashboard() {
                   >
                     <View style={styles.sidebarMenuCardLeft}>
                       <Icons.Award color={colors.primary} size={18} />
-                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>Membership Card</Text>
+                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>{t('membership_card')}</Text>
                     </View>
                     <Icons.ChevronRight color={colors.grayLight} size={16} />
                   </TouchableOpacity>
@@ -2674,13 +3032,13 @@ export default function HomeDashboard() {
                   >
                     <View style={styles.sidebarMenuCardLeft}>
                       <Icons.User color={colors.primary} size={18} />
-                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>My Profile</Text>
+                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>{t('my_profile')}</Text>
                     </View>
                     <Icons.ChevronRight color={colors.grayLight} size={16} />
                   </TouchableOpacity>
 
-                  {/* 5. Wallet Balance (Compact Account Balance Row directly below My Profile) */}
-                  <View 
+                  {/* 5. Wallet Balance (Interactive Account Balance Card linking to WalletScreen) */}
+                  <TouchableOpacity 
                     style={[
                       styles.sidebarMenuCard, 
                       { 
@@ -2689,18 +3047,28 @@ export default function HomeDashboard() {
                         justifyContent: 'space-between',
                       }
                     ]}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      setIsSidebarOpen(false);
+                      navigation.navigate('Wallet');
+                    }}
                   >
                     <View style={styles.sidebarMenuCardLeft}>
                       <Icons.Wallet color={colors.primary} size={18} />
-                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>Wallet Balance</Text>
+                      <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>{t('wallet_balance')}</Text>
                     </View>
-                    <Text style={{ fontSize: 13.5, fontWeight: 'bold', color: colors.primary }}>₹14,500.00</Text>
-                  </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Text style={{ fontSize: 13.5, fontWeight: 'bold', color: colors.primary }}>
+                        ₹{(currentUser?.walletBalance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </Text>
+                      <Icons.ChevronRight color={colors.muted} size={14} />
+                    </View>
+                  </TouchableOpacity>
 
                   {/* 6. App Preferences Section */}
                   <View style={{ marginTop: 14, marginHorizontal: 12 }}>
                     <Text style={[styles.themeSectionTitle, { color: colors.grayLight, marginBottom: 8, marginLeft: 4 }]}>
-                      App Preferences
+                      {t('app_preferences')}
                     </Text>
 
                     {/* Language */}
@@ -2720,7 +3088,7 @@ export default function HomeDashboard() {
                     >
                       <View style={styles.sidebarMenuCardLeft}>
                         <Icons.Globe color={colors.primary} size={18} />
-                        <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>Language</Text>
+                        <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>{t('language')}</Text>
                       </View>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         <Text style={{ fontSize: 12, fontWeight: 'bold', color: colors.primary }}>
@@ -2751,7 +3119,7 @@ export default function HomeDashboard() {
                     >
                       <View style={styles.sidebarMenuCardLeft}>
                         <Icons.MapPin color={colors.primary} size={18} />
-                        <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>Location</Text>
+                        <Text style={[styles.sidebarMenuCardText, { color: colors.text }]}>{t('location')}</Text>
                       </View>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: 140 }}>
                         <Text
@@ -2781,7 +3149,7 @@ export default function HomeDashboard() {
                           <Text style={[
                             styles.themeOptionText, 
                             { color: themeMode === 'light' ? activeContentColor : colors.text }
-                          ]}>Light</Text>
+                          ]}>{t('light')}</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity 
@@ -2798,7 +3166,7 @@ export default function HomeDashboard() {
                           <Text style={[
                             styles.themeOptionText, 
                             { color: themeMode === 'dark' ? activeContentColor : colors.text }
-                          ]}>Dark</Text>
+                          ]}>{t('dark')}</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity 
@@ -2815,7 +3183,7 @@ export default function HomeDashboard() {
                           <Text style={[
                             styles.themeOptionText, 
                             { color: themeMode === 'system' ? activeContentColor : colors.text }
-                          ]}>System</Text>
+                          ]}>{t('system')}</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -2827,27 +3195,43 @@ export default function HomeDashboard() {
                   {/* 7. Divider */}
                   <View style={[styles.sidebarCardDivider, { backgroundColor: colors.cardBorder, marginVertical: 12 }]} />
 
-                  {/* 8. Logout */}
-                  <TouchableOpacity 
-                    style={[styles.sidebarMenuCard, styles.sidebarLogoutCard, { backgroundColor: colors.cardBg, borderColor: 'rgba(239, 68, 68, 0.25)' }]} 
-                    activeOpacity={0.75}
-                    onPress={() => {
-                      setIsSidebarOpen(false);
-                      logout();
-                    }}
-                  >
-                    <View style={styles.sidebarMenuCardLeft}>
-                      <Icons.LogOut color="#EF4444" size={18} />
-                      <Text style={[styles.sidebarMenuCardText, { color: '#EF4444' }]}>Logout</Text>
-                    </View>
-                    <Icons.ChevronRight color="rgba(239, 68, 68, 0.4)" size={16} />
-                  </TouchableOpacity>
+                  {/* 8. Logout / Sign In */}
+                  {currentUser ? (
+                    <TouchableOpacity 
+                      style={[styles.sidebarMenuCard, styles.sidebarLogoutCard, { backgroundColor: colors.cardBg, borderColor: 'rgba(239, 68, 68, 0.25)' }]} 
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        setIsSidebarOpen(false);
+                        logout();
+                      }}
+                    >
+                      <View style={styles.sidebarMenuCardLeft}>
+                        <Icons.LogOut color="#EF4444" size={18} />
+                        <Text style={[styles.sidebarMenuCardText, { color: '#EF4444' }]}>{t('logout')}</Text>
+                      </View>
+                      <Icons.ChevronRight color="rgba(239, 68, 68, 0.4)" size={16} />
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity 
+                      style={[styles.sidebarMenuCard, { backgroundColor: '#F4C400', borderColor: '#F4C400' }]} 
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        setIsSidebarOpen(false);
+                        navigation.navigate('Login');
+                      }}
+                    >
+                      <View style={styles.sidebarMenuCardLeft}>
+                        <Icons.LogIn color="#000" size={18} />
+                        <Text style={[styles.sidebarMenuCardText, { color: '#000', fontWeight: '700' }]}>Sign In / Register</Text>
+                      </View>
+                      <Icons.ChevronRight color="#000" size={16} />
+                    </TouchableOpacity>
+                  )}
                 </ScrollView>
               </View>
             )}
           </Animated.View>
-        </View>
-      </Modal>
+      </Animated.View>
 
       {/* Universal Search Experience Modal (Matching Light Customer App Theme) */}
       <Modal
@@ -2862,13 +3246,13 @@ export default function HomeDashboard() {
           setVoiceError(null);
         }}
       >
-        <View style={[styles.searchLightContainer, { paddingTop: Math.max(insets.top, 10) }]}>
-          {/* Light Branded Header */}
-          <View style={styles.searchLightHeader}>
+        <View style={[styles.searchLightContainer, { backgroundColor: isDark ? colors.background : '#FFF8E8', paddingTop: Math.max(insets.top, 10) }]}>
+          {/* Light/Dark Branded Header */}
+          <View style={[styles.searchLightHeader, { backgroundColor: isDark ? colors.cardBg : '#FFF1C7', borderColor: isDark ? colors.cardBorder : '#F1EAD8' }]}>
             {/* Top Row: Back Button + Location Pill + Notification */}
             <View style={styles.searchLightTopRow}>
               <TouchableOpacity
-                style={styles.searchLightBackBtn}
+                style={[styles.searchLightBackBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF', borderColor: isDark ? colors.cardBorder : '#F1EAD8' }]}
                 activeOpacity={0.7}
                 onPress={() => {
                   stopVoiceListening();
@@ -2878,30 +3262,18 @@ export default function HomeDashboard() {
                   setVoiceError(null);
                 }}
               >
-                <Icons.ArrowLeft color="#0F172A" size={20} />
+                <Icons.ArrowLeft color={isDark ? colors.text : "#0F172A"} size={20} />
               </TouchableOpacity>
 
               <TouchableOpacity 
-                style={styles.searchLocationPill} 
-                activeOpacity={0.8}
-                onPress={() => navigation.navigate('CustomerTabs', { screen: 'Profile' })}
-              >
-                <Icons.MapPin color="#F5B800" size={13} />
-                <Text style={styles.searchLocationText} numberOfLines={1}>
-                  {getDisplayLocation()}
-                </Text>
-                <Icons.ChevronDown color="#0F172A" size={12} />
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.searchNotificationBtn} 
+                style={[styles.searchNotificationBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF', borderColor: isDark ? colors.cardBorder : '#F1EAD8' }]} 
                 activeOpacity={0.7}
                 onPress={() => {
                   setIsSearchOpen(false);
                   setIsNotifDropdownOpen(true);
                 }}
               >
-                <Icons.Bell color="#0F172A" size={19} />
+                <Icons.Bell color={isDark ? colors.text : "#0F172A"} size={19} />
                 {unreadNotifCount > 0 && (
                   <View style={styles.searchNotifBadge}>
                     <Text style={styles.searchNotifBadgeText}>{unreadNotifCount}</Text>
@@ -2913,88 +3285,72 @@ export default function HomeDashboard() {
             {/* Input Bar */}
             <View style={[
               styles.searchLightInputWrapper,
+              { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF', borderColor: '#F5B800' },
               isListening && styles.searchLightInputListening
             ]}>
               {isListening ? (
-                <View style={styles.inlineListeningRowLight}>
-                  <View style={styles.waveformContainer}>
-                    <Animated.View style={[styles.waveBarGold, { height: wave1 }]} />
-                    <Animated.View style={[styles.waveBarGold, { height: wave2 }]} />
-                    <Animated.View style={[styles.waveBarGold, { height: wave3 }]} />
-                    <Animated.View style={[styles.waveBarGold, { height: wave4 }]} />
-                  </View>
-                  <Text style={styles.listeningTextLight}>Listening...</Text>
-                  <TouchableOpacity onPress={stopVoiceListening} style={{ padding: 4 }}>
-                    <Icons.X color="#64748B" size={16} />
-                  </TouchableOpacity>
+                <View style={[styles.waveformContainer, { marginRight: 6 }]}>
+                  <Animated.View style={[styles.waveBarGold, { height: wave1 }]} />
+                  <Animated.View style={[styles.waveBarGold, { height: wave2 }]} />
+                  <Animated.View style={[styles.waveBarGold, { height: wave3 }]} />
+                  <Animated.View style={[styles.waveBarGold, { height: wave4 }]} />
                 </View>
               ) : (
-                <>
-                  <Icons.Search color="#94A3B8" size={18} style={{ marginRight: 8 }} />
-                  <TextInput
-                    style={styles.searchLightInputField}
-                    placeholder="Search products, food, services & more..."
-                    placeholderTextColor="#94A3B8"
-                    value={searchQuery}
-                    onChangeText={(txt) => {
-                      setSearchQuery(txt);
-                      if (voiceError) setVoiceError(null);
-                    }}
-                    autoFocus={!isListening}
-                  />
-                  {searchQuery.length > 0 && (
-                    <TouchableOpacity
-                      onPress={() => {
-                        setSearchQuery('');
-                        setCapturedImageUri(null);
-                      }}
-                      style={{ padding: 4, marginRight: 6 }}
-                    >
-                      <Icons.X color="#64748B" size={16} />
-                    </TouchableOpacity>
-                  )}
-                  
-                  <TouchableOpacity
-                    onPress={handleMicPress}
-                    style={{ padding: 4, marginRight: 6 }}
-                    activeOpacity={0.7}
-                  >
-                    <Icons.Mic color={isListening ? "#F59E0B" : "#0F172A"} size={20} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={handleCameraPress}
-                    style={{ padding: 4 }}
-                    activeOpacity={0.7}
-                  >
-                    <Icons.Camera color="#0F172A" size={20} />
-                  </TouchableOpacity>
-                </>
+                <Icons.Search color={isDark ? colors.subtext : "#94A3B8"} size={18} style={{ marginRight: 8 }} />
               )}
+
+              <TextInput
+                ref={searchInputRef}
+                style={[styles.searchLightInputField, { color: isDark ? colors.text : '#0F172A', flex: 1 }]}
+                placeholder={isListening ? "Listening... Speak now 🎙️" : "Search products, food, services & more..."}
+                placeholderTextColor={isListening ? "#D97706" : isDark ? colors.subtext : "#94A3B8"}
+                value={searchQuery}
+                onChangeText={(txt) => setSearchQuery(txt)}
+              />
+
+              {searchQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setSearchQuery('');
+                    setCapturedImageUri(null);
+                  }}
+                  style={{ padding: 4, marginRight: 6 }}
+                >
+                  <Icons.X color={isDark ? colors.subtext : "#64748B"} size={16} />
+                </TouchableOpacity>
+              )}
+              
+              <TouchableOpacity
+                onPress={handleMicPress}
+                style={{ padding: 4, marginRight: 6 }}
+                activeOpacity={0.7}
+              >
+                <Icons.Mic color={isListening ? "#F59E0B" : isDark ? colors.text : "#0F172A"} size={20} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleCameraPress}
+                style={{ padding: 4 }}
+                activeOpacity={0.7}
+              >
+                <Icons.Camera color={isDark ? colors.text : "#0F172A"} size={20} />
+              </TouchableOpacity>
             </View>
           </View>
-
-          {/* Voice Error Banner */}
-          {voiceError && (
-            <View style={styles.voiceErrorBannerLight}>
-              <Icons.AlertCircle color="#D97706" size={16} />
-              <Text style={styles.voiceErrorTextLight}>{voiceError}</Text>
-            </View>
-          )}
 
           {/* Visual Search captured image thumbnail */}
           {capturedImageUri && (
             <View style={styles.visualSearchChipRowLight}>
-              <View style={styles.visualSearchChipLight}>
+              <View style={[styles.visualSearchChipLight, { backgroundColor: isDark ? colors.cardBg : '#FFFFFF', borderColor: isDark ? colors.cardBorder : '#F1EAD8' }]}>
                 <Image source={{ uri: capturedImageUri }} style={styles.visualSearchThumbnail} />
-                <Text style={styles.visualSearchChipTextLight}>
+                <Text style={[styles.visualSearchChipTextLight, { color: isDark ? colors.text : '#0F172A' }]}>
                   {isVisualSearching ? 'Analyzing visual attributes...' : 'Visual matches captured photo'}
                 </Text>
                 {isVisualSearching ? (
                   <ActivityIndicator size="small" color="#F5B800" style={{ marginLeft: 6 }} />
                 ) : (
                   <TouchableOpacity onPress={() => setCapturedImageUri(null)} style={{ padding: 4 }}>
-                    <Icons.X color="#64748B" size={14} />
+                    <Icons.X color={isDark ? colors.subtext : "#64748B"} size={14} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -3003,15 +3359,17 @@ export default function HomeDashboard() {
 
           {/* Scrollable Body */}
           <ScrollView
-            style={styles.searchLightScroll}
+            style={[styles.searchLightScroll, { backgroundColor: isDark ? colors.background : '#FFF8E8' }]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            removeClippedSubviews={true}
+            scrollEventThrottle={16}
           >
             {searchQuery.trim().length === 0 ? (
               <View style={styles.searchSuggestionsLight}>
                 {/* Recent Searches */}
                 <View style={styles.searchSectionHeaderRow}>
-                  <Text style={styles.searchSectionTitleLight}>RECENT SEARCHES</Text>
+                  <Text style={[styles.searchSectionTitleLight, { color: isDark ? colors.subtext : '#64748B' }]}>RECENT SEARCHES</Text>
                   <TouchableOpacity onPress={() => useActivityStore.setState({ recentSearches: [] })}>
                     <Text style={styles.clearAllText}>Clear All</Text>
                   </TouchableOpacity>
@@ -3021,39 +3379,39 @@ export default function HomeDashboard() {
                   {['AC Repair', 'Whole Wheat Atta', 'Doctor Video Consultation', 'Hyderabadi Biryani'].map((term) => (
                     <TouchableOpacity
                       key={term}
-                      style={styles.recentSearchPill}
+                      style={[styles.recentSearchPill, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF', borderColor: isDark ? colors.cardBorder : '#E2E8F0' }]}
                       activeOpacity={0.8}
                       onPress={() => setSearchQuery(term)}
                     >
-                      <Icons.Clock color="#94A3B8" size={12} />
-                      <Text style={styles.recentSearchPillText}>{term}</Text>
+                      <Icons.Clock color={isDark ? colors.subtext : "#94A3B8"} size={12} />
+                      <Text style={[styles.recentSearchPillText, { color: isDark ? colors.text : '#0F172A' }]}>{term}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
 
                 {/* Popular Searches */}
-                <Text style={[styles.searchSectionTitleLight, { marginTop: 18 }]}>POPULAR SEARCHES</Text>
+                <Text style={[styles.searchSectionTitleLight, { marginTop: 18, color: isDark ? colors.subtext : '#64748B' }]}>POPULAR SEARCHES</Text>
                 <View style={styles.suggestionsGridLight}>
                   {['Smartphones', 'Hospitals', 'Electrician', 'Burgers', 'Hotels', 'Flight Booking', 'IT Jobs'].map((term) => (
                     <TouchableOpacity
                       key={term}
-                      style={styles.suggestionTagLight}
+                      style={[styles.suggestionTagLight, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF', borderColor: isDark ? colors.cardBorder : '#E2E8F0' }]}
                       activeOpacity={0.8}
                       onPress={() => setSearchQuery(term)}
                     >
                       <Icons.TrendingUp color="#F5B800" size={12} />
-                      <Text style={styles.suggestionTagTextLight}>{term}</Text>
+                      <Text style={[styles.suggestionTagTextLight, { color: isDark ? colors.text : '#0F172A' }]}>{term}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
 
                 {/* Categories */}
-                <Text style={[styles.searchSectionTitleLight, { marginTop: 22 }]}>CATEGORIES</Text>
+                <Text style={[styles.searchSectionTitleLight, { marginTop: 22, color: isDark ? colors.subtext : '#64748B' }]}>CATEGORIES</Text>
                 <View style={styles.categoriesGridLight}>
                   {DISCOVERY_CATEGORIES.map((cat: any, idx: number) => (
                     <TouchableOpacity
                       key={idx}
-                      style={styles.searchCategoryCardLight}
+                      style={[styles.searchCategoryCardLight, { backgroundColor: isDark ? colors.cardBg : '#FFFFFF', borderColor: isDark ? colors.cardBorder : '#E2E8F0' }]}
                       activeOpacity={0.85}
                       onPress={() => {
                         setIsSearchOpen(false);
@@ -3068,20 +3426,20 @@ export default function HomeDashboard() {
                       <View style={[styles.searchCategoryCircleLight, { backgroundColor: cat.bg }]}>
                         {renderCategoryIcon(cat.icon, cat.color)}
                       </View>
-                      <Text style={styles.searchCategoryLabelLight}>{cat.name}</Text>
+                      <Text style={[styles.searchCategoryLabelLight, { color: isDark ? colors.text : '#0F172A' }]}>{cat.name}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               </View>
             ) : getSearchResults().length > 0 ? (
               <View style={styles.searchResultsListLight}>
-                <Text style={styles.searchSectionTitleLight}>
+                <Text style={[styles.searchSectionTitleLight, { color: isDark ? colors.subtext : '#64748B' }]}>
                   SEARCH RESULTS ({getSearchResults().length})
                 </Text>
                 {getSearchResults().map((result: any, idx: number) => (
                   <TouchableOpacity
                     key={idx}
-                    style={styles.resultItemCardLight}
+                    style={[styles.resultItemCardLight, { backgroundColor: isDark ? colors.cardBg : '#FFFFFF', borderColor: isDark ? colors.cardBorder : '#E2E8F0' }]}
                     activeOpacity={0.88}
                     onPress={() => {
                       setIsSearchOpen(false);
@@ -3092,14 +3450,15 @@ export default function HomeDashboard() {
                       setSearchQuery('');
 
                       if (result.type === 'job' && result.jobData) {
-                        navigation.navigate('JobDetails', { job: result.jobData });
-                      } else if (result.type === 'product') {
+                        navigation.navigate('JobDetails', { job: result.jobData, openApplySheet: true });
+                      } else if (result.type === 'product' && isCartableCategory(result.categoryKey, result.name)) {
                         navigation.navigate('ProductDetails', { item: result, category: result.categoryKey });
                       } else {
-                        navigation.navigate('CategoryDetails', {
-                          categoryName: result.categoryKey,
-                          subCategoryName: result.subcategoryName,
-                          selectedItem: result.name,
+                        openRespectivePage(navigation, {
+                          category: result.categoryKey,
+                          subcategory: result.subcategoryName,
+                          name: result.name,
+                          ...result,
                         });
                       }
                     }}
@@ -3121,25 +3480,25 @@ export default function HomeDashboard() {
                         )}
                       </View>
 
-                      <Text style={styles.resultItemNameLight} numberOfLines={1}>
+                      <Text style={[styles.resultItemNameLight, { color: isDark ? colors.text : '#0F172A' }]} numberOfLines={1}>
                         {result.name}
                       </Text>
-                      <Text style={styles.resultItemSubTextLight} numberOfLines={1}>
+                      <Text style={[styles.resultItemSubTextLight, { color: isDark ? colors.subtext : '#64748B' }]} numberOfLines={1}>
                         {result.subcategoryName} • <Text style={styles.resultPriceHighlightLight}>{result.price}</Text>
                       </Text>
                     </View>
 
-                    <Icons.ChevronRight color="#94A3B8" size={18} />
+                    <Icons.ChevronRight color={isDark ? colors.subtext : "#94A3B8"} size={18} />
                   </TouchableOpacity>
                 ))}
               </View>
             ) : (
               <View style={styles.noResultsContainerLight}>
-                <View style={styles.noResultsIconCircleLight}>
-                  <Icons.Search color="#94A3B8" size={36} />
+                <View style={[styles.noResultsIconCircleLight, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F1F5F9' }]}>
+                  <Icons.Search color={isDark ? colors.subtext : "#94A3B8"} size={36} />
                 </View>
-                <Text style={styles.noResultsTitleLight}>No results found</Text>
-                <Text style={styles.noResultsSubtitleLight}>
+                <Text style={[styles.noResultsTitleLight, { color: isDark ? colors.text : '#0F172A' }]}>No results found</Text>
+                <Text style={[styles.noResultsSubtitleLight, { color: isDark ? colors.subtext : '#64748B' }]}>
                   We couldn't find any match for "{searchQuery}". Try searching for products, services, daily needs, food, stays, or jobs.
                 </Text>
               </View>
@@ -3256,11 +3615,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   navbar: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderColor: '#F1EAD8',
-    paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 8,
     zIndex: 100,
   },
 
@@ -3268,15 +3625,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
-    gap: 4,
+    height: 40,
+    marginBottom: 6,
+    gap: 8,
   },
   headerConnectLogo: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    marginHorizontal: 4,
-    borderWidth: 1,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1.5,
     borderColor: '#FDE68A',
   },
   navLogo: {
@@ -3287,89 +3644,83 @@ const styles = StyleSheet.create({
     borderColor: '#F59E0B',
     marginRight: 2,
   },
-  locationPill: {
+  headerWelcomeGroup: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    backgroundColor: '#FFFFFF',
-    gap: 4,
-    marginHorizontal: 4,
     minWidth: 0,
+    marginRight: 8,
   },
-  locationTextCol: {
+  headerWelcomeTextCol: {
     flex: 1,
     minWidth: 0,
+    justifyContent: 'center',
+    marginLeft: 8,
   },
-  locationLabelText: {
-    fontSize: 7.5,
+  headerWelcomeSubtext: {
+    fontSize: 10,
+    fontWeight: '600',
+    lineHeight: 12,
+  },
+  headerWelcomeNameText: {
+    fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 0.5,
-    color: '#64748B',
-  },
-  locationValueText: {
-    fontSize: 11,
-    fontWeight: 'bold',
-    color: '#0F172A',
+    lineHeight: 16,
+    letterSpacing: 0.1,
   },
   navRightGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
+    gap: 8,
   },
   navIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
   },
   badge: {
     position: 'absolute',
-    top: 1,
-    right: 1,
+    top: -1,
+    right: -1,
     backgroundColor: '#EF4444',
     borderRadius: 6,
-    minWidth: 13,
-    height: 13,
+    minWidth: 12,
+    height: 12,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 2,
   },
   badgeText: {
     color: '#FFFFFF',
-    fontSize: 8,
+    fontSize: 7.5,
     fontWeight: 'bold',
   },
   commerceSearchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 44,
-    borderRadius: 12,
+    height: 38,
+    borderRadius: 10,
     borderWidth: 1.2,
     borderColor: '#FCD34D',
     backgroundColor: '#FFFFFF',
-    paddingLeft: 12,
-    paddingRight: 2,
-    gap: 8,
-    marginTop: 4,
+    paddingLeft: 10,
+    paddingRight: 4,
+    gap: 6,
   },
 
   searchBarLeftTouch: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     height: '100%',
   },
   searchPlaceholderText: {
     flex: 1,
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '500',
     color: '#64748B',
   },
@@ -3382,9 +3733,9 @@ const styles = StyleSheet.create({
     padding: 2,
   },
   searchActionIconBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3766,13 +4117,11 @@ const styles = StyleSheet.create({
   },
   vendorCard: {
     width: 200,
-    marginRight: 12,
+    marginRight: 14,
     padding: 0,
     overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -3781,51 +4130,59 @@ const styles = StyleSheet.create({
   },
   vendorImg: {
     width: '100%',
-    height: 100,
-    backgroundColor: '#F1F5F9',
+    height: 110,
+    resizeMode: 'cover',
   },
   vendorInfo: {
     padding: 10,
   },
   vendorName: {
     fontSize: 13,
-    fontWeight: 'bold',
-    color: '#0F172A',
+    fontWeight: '800',
+    marginBottom: 4,
   },
   vendorMeta: {
     flexDirection: 'row',
-    marginTop: 6,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
   },
   metaCol: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginRight: 12,
+    gap: 3,
   },
   metaVal: {
     fontSize: 10.5,
-    color: '#64748B',
+    fontWeight: '700',
   },
   // Sidebar Styling
   backdrop: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    zIndex: 999,
   },
   sidebar: {
     position: 'absolute',
     top: 0,
     bottom: 0,
-    right: 0,
+    left: 0,
     backgroundColor: '#050B1E',
-    borderLeftWidth: 1,
+    borderRightWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     shadowColor: '#000',
-    shadowOffset: { width: -8, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 15,
+    shadowOffset: { width: 6, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
     elevation: 10,
-    zIndex: 1000,
-    justifyContent: 'space-between',
+    zIndex: 901,
+  },
+  hamburgerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 2,
   },
   sidebarHeader: {
     flexDirection: 'row',
@@ -4705,28 +5062,28 @@ const styles = StyleSheet.create({
     width: 18,
     backgroundColor: '#3B82F6',
   },
-  // Notification Dropdown Panel Styles
-  notifOverlayContainer: {
-    ...StyleSheet.absoluteFill,
-    zIndex: 9999,
-    elevation: 9999,
+  // Notification Modal Styles
+  notifFullModalContainer: {
+    flex: 1,
+    position: 'relative',
+    alignItems: 'center',
   },
-  notifBackdrop: {
+  notifFullModalBackdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0, 0, 0, 0.15)',
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
   },
   notifDropdownPanel: {
     position: 'absolute',
     right: 14,
     width: width - 32,
-    maxWidth: 340,
-    borderRadius: 16,
-    borderWidth: 1.2,
+    maxWidth: 350,
+    borderRadius: 18,
+    borderWidth: 1.5,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 12,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.35,
+    shadowRadius: 20,
+    elevation: 24,
     overflow: 'hidden',
   },
   notifPanelHeader: {
@@ -5179,6 +5536,154 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     maxWidth: 280,
+  },
+
+  // Recommended Partner Hubs Bottom Sheet Styles
+  partnerBottomSheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 11, 30, 0.7)',
+    justifyContent: 'flex-end',
+  },
+  partnerBottomSheetContainer: {
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    borderTopWidth: 1,
+    height: height * 0.78,
+    maxHeight: height * 0.82,
+    paddingTop: 8,
+    overflow: 'hidden',
+  },
+  sheetDragHandle: {
+    width: 38,
+    height: 4.5,
+    borderRadius: 3,
+    backgroundColor: 'rgba(148, 163, 184, 0.4)',
+    alignSelf: 'center',
+    marginBottom: 8,
+  },
+  partnerSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingBottom: 8,
+  },
+  partnerSheetTitle: {
+    fontSize: 16.5,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  partnerSheetSubtitle: {
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  partnerSheetCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  partnerChipsWrapper: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.15)',
+    marginBottom: 10,
+  },
+  partnerChipsRow: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  partnerCatChip: {
+    paddingHorizontal: 13,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  partnerCatChipText: {
+    fontSize: 11.5,
+  },
+  partnerCompactCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 10,
+    gap: 12,
+  },
+  partnerCompactImg: {
+    width: 60,
+    height: 60,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+  },
+  partnerCompactInfo: {
+    flex: 1,
+  },
+  partnerTopMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 3,
+  },
+  partnerCategoryTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  partnerCategoryTagText: {
+    fontSize: 8.5,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+  partnerDistanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  partnerDistanceText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#F5B800',
+  },
+  partnerCompactName: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  partnerCompactDesc: {
+    fontSize: 10.5,
+    marginTop: 1,
+    marginBottom: 4,
+  },
+  partnerBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  partnerRatingTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  partnerRatingText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#F5B800',
+  },
+  partnerCtaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: '#F5B800',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  partnerCtaText: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    color: '#0F172A',
   },
 });
 

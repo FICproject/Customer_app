@@ -8,10 +8,8 @@ import * as Icons from 'lucide-react-native';
 
 const { height } = Dimensions.get('window');
 
-type PermissionsScreenProp = StackNavigationProp<AuthStackParamList, 'Permissions'>;
-
 export default function PermissionsScreen() {
-  const navigation = useNavigation<PermissionsScreenProp>();
+  const navigation = useNavigation<any>();
   
   // Track state of permission approval
   const [locationGranted, setLocationGranted] = useState(false);
@@ -81,8 +79,8 @@ export default function PermissionsScreen() {
   };
 
   const handleContinue = () => {
-    // Navigate to Join Now (Registration)
-    navigation.navigate('JoinNow');
+    // Navigate to Create Account (2-Step Registration)
+    navigation.navigate('CreateAccount');
   };
 
   return (

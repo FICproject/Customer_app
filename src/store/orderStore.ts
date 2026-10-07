@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiFetch } from '../services/api';
 
 export type OrderCategory = 'Daily Needs' | 'Food' | 'Products' | 'Services' | 'Stay' | 'Travel' | 'Jobs' | 'Electronics' | 'Fashion' | 'Healthcare';
@@ -8,14 +10,20 @@ export interface OrderItemDetail {
   name: string;
   quantity: number;
   price: number;
+  originalPrice?: number;
+  mrp?: number;
   variant?: string;
+  image?: string;
 }
 
 export interface Order {
   id: string;
+  user_id?: string;
   order_number: string;
   vendor_id: string;
   vendor_name?: string;
+  category?: OrderCategory;
+  order_type?: OrderType;
   customer_name: string;
   customer_phone: string;
   customer_address: string;
@@ -23,12 +31,24 @@ export interface Order {
   customer_longitude: number;
   product_details: string;
   amount: number;
+  finalAmount?: number;
   status: string;
   created_at: string;
 
+  // Pricing & Breakdown details
+  listing_price?: number;
+  original_amount?: number;
+  mrp_amount?: number;
+  selling_price?: number;
+  platform_fee?: number;
+  delivery_fee?: number;
+  discount?: number;
+  coupon_code?: string;
+  coupon_discount?: number;
+  member_discount?: number;
+
   // Category-specific extensions
-  category?: OrderCategory;
-  order_type?: OrderType;
+  application_id?: string;
   image?: string;
   brand_or_seller?: string;
   items?: OrderItemDetail[];
@@ -42,6 +62,18 @@ export interface Order {
 
   // Travel / Stay specifics
   operator_name?: string;
+  vehicle_number?: string;
+  vehicleNumber?: string;
+  vehicleRegNo?: string;
+  busNumber?: string;
+  bus_name?: string;
+  bus_type?: string;
+  boarding_point?: string;
+  dropping_point?: string;
+  travelers?: any[];
+  seat?: string;
+  allocated_seat?: string;
+  seat_status?: string;
   route?: string;
   travel_date?: string;
   passenger_count?: number;
@@ -56,11 +88,35 @@ export interface Order {
   payment_status?: 'Paid' | 'Pending' | 'Refunded';
   expected_delivery?: string;
   delivered_at?: string;
-  delivery_fee?: number;
-  discount?: number;
   tax?: number;
   rating?: number;
   review_note?: string;
+  tracking_updates?: Array<{
+    title?: string;
+    status?: string;
+    message?: string;
+    timestamp?: string | Date;
+  }>;
+
+  // Job application specifics
+  job_id?: string;
+  salary?: string;
+  location?: string;
+  department?: string;
+  work_mode?: string;
+  experience?: string;
+  resume_name?: string;
+  applicant_education?: string;
+  applicant_experience?: string;
+  applicant_email?: string;
+  application_status?: string;
+  candidateName?: string;
+  candidatePhone?: string;
+  candidateEmail?: string;
+  candidateEducation?: string;
+  candidateExperience?: string;
+  candidateResume?: string;
+  [key: string]: any;
 }
 
 export interface Assignment {
@@ -84,19 +140,34 @@ interface OrderState {
 
   setIncomingAssignment: (asg: any | null) => void;
   decrementIncomingTimer: () => void;
-  loadAllOrders: () => Promise<void>;
+  addLocalOrder: (order: Order) => void;
+  loadAllOrders: (force?: boolean) => Promise<void>;
   loadDashboard: (userId: string) => Promise<void>;
   claimOrder: (orderId: string, partnerId: string) => Promise<boolean>;
   respondToAssignment: (asgId: string, partnerId: string, action: 'accept' | 'reject') => Promise<boolean>;
   stepMilestone: (orderId: string, partnerId: string, step: string, otp?: string, photoProof?: string | null) => Promise<{ success: boolean; message?: string }>;
   cancelCustomerOrder: (orderId: string, reason?: string) => Promise<boolean>;
   rateOrder: (orderId: string, rating: number, review?: string) => Promise<boolean>;
+  updateOrderStatusLocally: (orderId: string, newStatus: string, extra?: any) => void;
+  updateDeliveryDetails: (
+    orderId: string,
+    details: {
+      customer_address?: string;
+      address_label?: string;
+      customer_name?: string;
+      customer_phone?: string;
+    }
+  ) => Promise<boolean>;
   clearActive: () => void;
 }
+
+let _lastOrderFetchTime = 0;
+let _isFetchingOrders = false;
 
 export const INITIAL_SEED_ORDERS: Order[] = [
   {
     id: 'ord_dn_1',
+    user_id: 'cust_uma',
     order_number: 'DN-9941',
     vendor_id: 'v_daily_needs',
     vendor_name: 'Organic Harvest Fresh Daily',
@@ -120,11 +191,12 @@ export const INITIAL_SEED_ORDERS: Order[] = [
     payment_status: 'Paid',
     expected_delivery: 'Arriving in 15 mins (04:15 PM)',
     delivery_fee: 0,
-    created_at: '2026-08-28T14:30:00.000Z',
+    created_at: new Date(Date.now() - 1 * 3600 * 1000).toISOString(),
     image: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80',
   },
   {
     id: 'ord_food_1',
+    user_id: 'cust_uma',
     order_number: 'FD-8832',
     vendor_id: 'v_royal_tandoor',
     vendor_name: 'Royal Tandoori & Biryani House',
@@ -148,11 +220,12 @@ export const INITIAL_SEED_ORDERS: Order[] = [
     payment_status: 'Paid',
     expected_delivery: 'Chef preparing • Delivery in 25 mins',
     delivery_fee: 0,
-    created_at: '2026-08-28T13:15:00.000Z',
+    created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
     image: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=500&auto=format&fit=crop&q=80',
   },
   {
     id: 'ord_prod_1',
+    user_id: 'cust_uma',
     order_number: 'PR-1049',
     vendor_id: 'v_bose_india',
     vendor_name: 'Bose Official Electronics',
@@ -175,11 +248,12 @@ export const INITIAL_SEED_ORDERS: Order[] = [
     payment_status: 'Paid',
     delivered_at: '27 Aug 2026, 05:40 PM',
     delivery_fee: 0,
-    created_at: '2026-08-26T10:00:00.000Z',
+    created_at: new Date(Date.now() - 2 * 86400 * 1000).toISOString(),
     image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&auto=format&fit=crop&q=80',
   },
   {
     id: 'ord_srv_1',
+    user_id: 'cust_uma',
     order_number: 'SRV-4492',
     vendor_id: 'v_urban_care',
     vendor_name: 'UrbanCare Home Repairs',
@@ -203,11 +277,12 @@ export const INITIAL_SEED_ORDERS: Order[] = [
     payment_status: 'Pending',
     expected_delivery: 'Technician Assigned: Ramesh Kumar',
     delivery_fee: 0,
-    created_at: '2026-08-28T09:00:00.000Z',
+    created_at: new Date(Date.now() - 4 * 86400 * 1000).toISOString(),
     image: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=500&auto=format&fit=crop&q=80',
   },
   {
     id: 'ord_stay_1',
+    user_id: 'cust_uma',
     order_number: 'STY-3021',
     vendor_id: 'v_taj_resorts',
     vendor_name: 'Taj Gateway Resort & Spa',
@@ -233,11 +308,12 @@ export const INITIAL_SEED_ORDERS: Order[] = [
     payment_method: 'UPI Prepaid',
     payment_status: 'Paid',
     delivery_fee: 0,
-    created_at: '2026-08-25T11:20:00.000Z',
+    created_at: new Date(Date.now() - 10 * 86400 * 1000).toISOString(),
     image: 'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=500&auto=format&fit=crop&q=80',
   },
   {
     id: 'ord_travel_1',
+    user_id: 'cust_uma',
     order_number: 'TRV-5510',
     vendor_id: 'v_indigo_airlines',
     vendor_name: 'IndiGo Airlines India',
@@ -261,11 +337,12 @@ export const INITIAL_SEED_ORDERS: Order[] = [
     payment_method: 'NetBanking (ICICI)',
     payment_status: 'Paid',
     delivery_fee: 0,
-    created_at: '2026-08-20T16:45:00.000Z',
+    created_at: new Date(Date.now() - 15 * 86400 * 1000).toISOString(),
     image: 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=500&auto=format&fit=crop&q=80',
   },
   {
     id: 'job_app_7703',
+    user_id: 'cust_uma',
     order_number: 'JOB-AP-7703',
     vendor_id: 'v_techforge',
     vendor_name: 'TechForge Solutions India',
@@ -278,12 +355,21 @@ export const INITIAL_SEED_ORDERS: Order[] = [
     customer_longitude: 77.6412,
     product_details: 'Senior Full Stack React Native Developer',
     brand_or_seller: 'TechForge Talent Acquisition',
-    appointment_slot: 'Technical Round 1: Tomorrow at 03:00 PM',
+    salary: '₹12–18 LPA',
+    location: 'Bangalore, KA',
+    department: 'IT & Software Engineering',
+    work_mode: 'Hybrid',
+    experience: '2–5 yrs',
+    resume_name: 'Uma_Resume_2026.pdf',
+    applicant_education: 'B.Tech in Computer Science',
+    applicant_experience: '3 Years Experience',
+    applicant_email: 'uma.dev@example.com',
+    application_status: 'Applied',
     image: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=500&auto=format&fit=crop&q=80',
-    items: [{ name: 'Job Application Screening & Tech Interview', quantity: 1, price: 0 }],
+    items: [{ name: 'Senior Full Stack React Native Developer', quantity: 1, price: 0 }],
     item_count: 1,
     amount: 0,
-    status: 'Confirmed',
+    status: 'Application Submitted',
     payment_method: 'Free Job Application',
     payment_status: 'Paid',
     delivery_fee: 0,
@@ -291,33 +377,174 @@ export const INITIAL_SEED_ORDERS: Order[] = [
   },
 ];
 
-export const useOrderStore = create<OrderState>((set, get) => ({
-  allOrders: INITIAL_SEED_ORDERS,
-  activeAssignment: null,
-  activeOrder: null,
-  incomingAssignment: null,
-  incomingTimer: 30,
-  earningsLogs: [],
-  todayCompleted: 0,
-  todayEarnings: 0,
-  rating: 4.9,
+export function normalizeStoredOrderCategory<T extends Partial<Order>>(order: T): T {
+  if (!order) return order;
+  const currentCat = String(order.category || '').trim();
+  if (['Jobs', 'Services', 'Stay', 'Travel', 'Food', 'Daily Needs'].includes(currentCat)) {
+    return order;
+  }
+  const details = (order.product_details || '').toLowerCase();
+  const hasDailyNeeds =
+    (order.items &&
+      order.items.some((it: any) => {
+        const n = String(it.name || '').toLowerCase();
+        const c = String(it.category || '').toLowerCase();
+        return c.includes('daily') || c.includes('grocery') || /\b(milk|lays|curd|bread|eggs?|butter|chips)\b/i.test(n);
+      })) ||
+    /\b(milk|lays|curd|bread|eggs?|butter|chips)\b/i.test(details);
 
-  setIncomingAssignment: (asg) => set({ incomingAssignment: asg, incomingTimer: 30 }),
-  decrementIncomingTimer: () => set((state) => ({ incomingTimer: Math.max(0, state.incomingTimer - 1) })),
+  if (hasDailyNeeds) {
+    return { ...order, category: 'Daily Needs' as OrderCategory };
+  }
+  return order;
+}
 
-  loadAllOrders: async () => {
-    try {
-      const res = await apiFetch('/orders');
-      if (res.status === 'success' && Array.isArray(res.data) && res.data.length > 0) {
-        set({ allOrders: res.data });
-      }
-    } catch (err) {
-      console.warn('Failed to load all orders from API, using offline seed:', err);
-      if (get().allOrders.length === 0) {
-        set({ allOrders: INITIAL_SEED_ORDERS });
-      }
-    }
-  },
+export const useOrderStore = create<OrderState>()(
+  persist(
+    (set, get) => ({
+      allOrders: INITIAL_SEED_ORDERS,
+      activeAssignment: null,
+      activeOrder: null,
+      incomingAssignment: null,
+      incomingTimer: 30,
+      earningsLogs: [],
+      todayCompleted: 0,
+      todayEarnings: 0,
+      rating: 4.9,
+
+      setIncomingAssignment: (asg) => set({ incomingAssignment: asg, incomingTimer: 30 }),
+      decrementIncomingTimer: () => set((state) => ({ incomingTimer: Math.max(0, state.incomingTimer - 1) })),
+
+      addLocalOrder: (order: Order) => {
+        let uId = 'guest_user';
+        try {
+          const authModule = require('./authStore');
+          const curUser = authModule.useAuthStore.getState().currentUser;
+          if (curUser) {
+            uId = curUser.isGuest ? 'guest_user' : curUser.id;
+          }
+        } catch {}
+        const scopedOrder = normalizeStoredOrderCategory({ ...order, user_id: order.user_id || uId });
+
+        set((state) => {
+          const current = state.allOrders || [];
+          const filtered = current.filter(
+            (o) => o.id !== scopedOrder.id && o.order_number !== scopedOrder.order_number
+          );
+          return { allOrders: [scopedOrder, ...filtered] };
+        });
+      },
+
+      updateOrderStatusLocally: (orderId: string, newStatus: string, extra?: any) => {
+        set((state) => {
+          const current = state.allOrders || [];
+          const updated = current.map((o) => {
+            const matches =
+              o.id === orderId ||
+              o.order_number === orderId ||
+              (o as any)._id === orderId ||
+              (extra?.order?.order_number && o.order_number === extra.order.order_number) ||
+              (extra?.order?.id && o.id === extra.order.id) ||
+              (extra?.order?._id && (o as any)._id === extra.order._id);
+            if (matches) {
+              const currentUpdates = o.tracking_updates || [];
+              const newUpdate = extra?.tracking_update || {
+                title: extra?.title || `Order ${newStatus}`,
+                status: newStatus,
+                message: extra?.message || extra?.description || `Status updated to ${newStatus}`,
+                timestamp: new Date().toISOString()
+              };
+              return {
+                ...o,
+                ...(extra?.order || {}),
+                status: newStatus,
+                tracking_updates: [...currentUpdates, newUpdate],
+              };
+            }
+            return o;
+          });
+          return { allOrders: updated };
+        });
+      },
+
+      updateDeliveryDetails: async (orderId: string, details: any) => {
+        // Optimistically update locally for instantaneous response
+        set((state) => {
+          const current = state.allOrders || [];
+          const updated = current.map((o) => {
+            const matches = o.id === orderId || o.order_number === orderId || (o as any)._id === orderId;
+            if (matches) {
+              return {
+                ...o,
+                ...details,
+                customer_address: details.customer_address || o.customer_address,
+                customerAddress: details.customer_address || (o as any).customerAddress,
+                address_label: details.address_label || (o as any).address_label,
+                customer_name: details.customer_name || o.customer_name,
+                memberName: details.customer_name || (o as any).memberName,
+                customer_phone: details.customer_phone || o.customer_phone,
+                customerPhone: details.customer_phone || (o as any).customerPhone,
+                phone: details.customer_phone || (o as any).phone,
+              };
+            }
+            return o;
+          });
+          return { allOrders: updated };
+        });
+
+        // Persist to backend API
+        try {
+          const res = await apiFetch(`/orders/${orderId}/delivery-details`, {
+            method: 'PATCH',
+            body: JSON.stringify(details),
+          });
+          return res?.success !== false;
+        } catch (e) {
+          console.warn('[OrderStore] Failed to update delivery details on backend:', e);
+          return false;
+        }
+      },
+
+      loadAllOrders: async (force = false) => {
+        const now = Date.now();
+        if (!force && (_isFetchingOrders || (now - _lastOrderFetchTime < 4000 && get().allOrders.length > 0))) {
+          return;
+        }
+
+        _isFetchingOrders = true;
+        try {
+          const res = await apiFetch('/orders', { skipCache: true });
+          _lastOrderFetchTime = Date.now();
+          if (res && res.status === 'success' && Array.isArray(res.data) && res.data.length > 0) {
+            const current = get().allOrders || [];
+            const backendIdSet = new Set<string>();
+            const backendOrderNumSet = new Set<string>();
+
+            res.data.forEach((o: any) => {
+              if (o.id) backendIdSet.add(String(o.id));
+              if (o._id) backendIdSet.add(String(o._id));
+              if (o.order_number) backendOrderNumSet.add(String(o.order_number));
+            });
+
+            const localOnly = current.filter((o: any) => {
+              const matchesBackend =
+                (o.id && backendIdSet.has(String(o.id))) ||
+                (o._id && backendIdSet.has(String(o._id))) ||
+                (o.order_number && backendOrderNumSet.has(String(o.order_number)));
+              return !matchesBackend;
+            });
+
+            set({ allOrders: [...res.data, ...localOnly].map(normalizeStoredOrderCategory) });
+          }
+        } catch (err) {
+          console.warn('Failed to load all orders from API, using offline persistent state:', err);
+          if (get().allOrders.length === 0) {
+            set({ allOrders: INITIAL_SEED_ORDERS });
+          }
+        } finally {
+          _isFetchingOrders = false;
+        }
+      },
 
   loadDashboard: async (userId) => {
     try {
@@ -402,45 +629,48 @@ export const useOrderStore = create<OrderState>((set, get) => ({
   },
 
   cancelCustomerOrder: async (orderId, reason) => {
-    try {
-      const res = await apiFetch(`/orders/${orderId}/cancel`, {
-        method: 'POST',
-        body: JSON.stringify({ reason: reason || 'Customer requested cancellation' }),
-      });
-      if (res.status === 'success') {
-        // Optimistic local state update
-        set((state) => ({
-          allOrders: state.allOrders.map((o) =>
-            o.id === orderId ? { ...o, status: 'Cancelled' } : o
-          ),
-        }));
-        return true;
-      }
-    } catch (err) {
-      console.warn('Failed to cancel order:', err);
-    }
-    return false;
+    // 1. Immediate optimistic local state update (0ms UI delay)
+    set((state) => ({
+      allOrders: state.allOrders.map((o) =>
+        o.id === orderId ? { ...o, status: 'Cancelled' } : o
+      ),
+    }));
+
+    // 2. Background sync to backend
+    apiFetch(`/orders/${orderId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason || 'Customer requested cancellation' }),
+    }).catch((err) => {
+      console.warn('Background cancel order notice:', err);
+    });
+
+    return true;
   },
 
   rateOrder: async (orderId, rating, review) => {
-    try {
-      const res = await apiFetch(`/orders/${orderId}/review`, {
-        method: 'POST',
-        body: JSON.stringify({ rating, review }),
-      });
-      if (res.status === 'success') {
-        set((state) => ({
-          allOrders: state.allOrders.map((o) =>
-            o.id === orderId ? { ...o, rating, review_note: review } : o
-          ),
-        }));
-        return true;
-      }
-    } catch (err) {
-      console.warn('Failed to rate order:', err);
-    }
-    return false;
+    // 1. Immediate optimistic local state update (0ms UI delay)
+    set((state) => ({
+      allOrders: state.allOrders.map((o) =>
+        o.id === orderId ? { ...o, rating, review_note: review } : o
+      ),
+    }));
+
+    // 2. Background sync to backend
+    apiFetch(`/orders/${orderId}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ rating, review }),
+    }).catch((err) => {
+      console.warn('Background rate order notice:', err);
+    });
+
+    return true;
   },
 
   clearActive: () => set({ activeOrder: null, activeAssignment: null, incomingAssignment: null }),
-}));
+}),
+    {
+      name: 'connect_app_orders_storage',
+      storage: createJSONStorage(() => AsyncStorage),
+    }
+  )
+);
